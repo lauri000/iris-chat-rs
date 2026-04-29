@@ -127,5 +127,7 @@ cargo test -p nostr-double-ratchet --manifest-path rust/Cargo.toml
 See [./TUTORIAL.md](./TUTORIAL.md) for the user-facing integration guide.
 See [./ARCHITECTURE.md](./ARCHITECTURE.md) for the current owner/device architecture, invite
 semantics, and recommended integration flow.
+See [./MASTER_PARITY.md](./MASTER_PARITY.md) for the roadmap to reach behavioral and wire-format
+parity with the current `htree/master` implementation without copying its internal structure.
 See [./SOURCES.md](./SOURCES.md) for the compact source index behind the current group-architecture
 comparisons and tradeoff discussion.

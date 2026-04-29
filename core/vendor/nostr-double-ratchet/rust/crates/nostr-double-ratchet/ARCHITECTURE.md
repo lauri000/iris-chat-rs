@@ -4,6 +4,8 @@ This document describes the current Rust architecture after the hard cut away fr
 `owner == device` convenience model.
 
 For a user-facing integration guide, start with [./TUTORIAL.md](./TUTORIAL.md).
+For the roadmap to match `htree/master` behavior while preserving these boundaries, see
+[./MASTER_PARITY.md](./MASTER_PARITY.md).
 For a compact evidence index behind the group-design comparisons, see [./SOURCES.md](./SOURCES.md).
 
 ## Hard-Cut Summary
