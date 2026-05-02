@@ -64,6 +64,9 @@ final class InteropHarnessTests: XCTestCase {
         switch action {
         case "create_account_and_report_identity", "report_logged_in_identity":
             let snapshot = try await ensureLoggedIn(manager: manager, env: env)
+            _ = try await waitFor(label: "native secret persistence", timeout: 10) {
+                secretStore.load()?.ownerPubkeyHex.caseInsensitiveCompare(snapshot.publicKeyHex) == .orderedSame ? true : nil
+            }
             reportIdentity(snapshot)
         case "report_runtime_debug_snapshot":
             _ = try await ensureLoggedIn(manager: manager, env: env)
