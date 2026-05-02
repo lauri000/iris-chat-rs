@@ -124,10 +124,10 @@ That crate translates:
 cargo test -p nostr-double-ratchet --manifest-path rust/Cargo.toml
 ```
 
-See [./TUTORIAL.md](./TUTORIAL.md) for the user-facing integration guide.
-See [./ARCHITECTURE.md](./ARCHITECTURE.md) for the current owner/device architecture, invite
+See [./docs/TUTORIAL.md](./docs/TUTORIAL.md) for the user-facing integration guide.
+See [./docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the current owner/device architecture, invite
 semantics, and recommended integration flow.
-See [./MASTER_PARITY.md](./MASTER_PARITY.md) for the roadmap to reach behavioral and wire-format
-parity with the current `htree/master` implementation without copying its internal structure.
-See [./SOURCES.md](./SOURCES.md) for the compact source index behind the current group-architecture
+See [./docs/MASTER_PARITY.md](./docs/MASTER_PARITY.md) for the optional interop payload and
+sender-key protocol formats layered above the core ratchet.
+See [./docs/SOURCES.md](./docs/SOURCES.md) for the compact source index behind the current group-architecture
 comparisons and tradeoff discussion.

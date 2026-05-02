@@ -21,13 +21,13 @@ Concise evidence index for the current group-architecture discussion.
 
 ### `iris-fork` current Rust group model
 
-- [`README.md`](./README.md)
+- [`README.md`](../README.md)
   States the current fork split and that `GroupManager` is the pairwise-fanout group layer above `SessionManager`.
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md)
   Documents the owner/device architecture and the current pairwise group flow used by the Rust core.
-- [`src/group_manager.rs`](./src/group_manager.rs)
+- [`src/group_manager.rs`](../src/group_manager.rs)
   Holds the local revisioned group state machine: create, sync, membership/admin changes, and `GroupMessage` over pairwise payload bytes.
-- [`src/session_manager.rs`](./src/session_manager.rs)
+- [`src/session_manager.rs`](../src/session_manager.rs)
   Shows the pairwise delivery surface used by groups: `deliveries`, `invite_responses`, and `relay_gaps`.
 
 ### App-core recovery evidence
@@ -50,7 +50,7 @@ Concise evidence index for the current group-architecture discussion.
   Best local reference for the sender-key message plane: one outer event signed by a sender-event key and encrypted with sender-key state.
 - [`iris` `src/session_manager.rs`](/Users/l/Projects/iris/nostr-double-ratchet/rust/crates/nostr-double-ratchet/src/session_manager.rs)
   Best local reference for sender-key attribution and recovery: authenticated sender-key distribution, sender-event mapping, and queued outer decrypt.
-- [`iris-fork` `src/group_manager.rs`](./src/group_manager.rs)
+- [`iris-fork` `src/group_manager.rs`](../src/group_manager.rs)
   Best local reference for the pairwise alternative: every group control and message payload still rides ordinary pairwise transport.
 - [Signal 2014: Private Group Messaging](https://signal.org/blog/private-groups/)
   Useful prior art for pairwise-fanout groups and for why that model initially appealed.
