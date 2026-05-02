@@ -14,6 +14,7 @@ nostr = { version = "0.37", default-features = false, features = ["std", "nip44"
 nostr-sdk = { version = "0.37", default-features = false, features = ["nip44"] }
 nostr-double-ratchet = { path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
 nostr-double-ratchet-nostr = { path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-nostr" }
+nostr-double-ratchet-pairwise-codec = { path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-pairwise-codec" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

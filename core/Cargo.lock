@@ -956,6 +956,7 @@ dependencies = [
  "nostr",
  "nostr-double-ratchet",
  "nostr-double-ratchet-nostr",
+ "nostr-double-ratchet-pairwise-codec",
  "nostr-sdk",
  "rand",
  "serde",
@@ -1056,6 +1057,16 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "urlencoding",
+]
+
+[[package]]
+name = "nostr-double-ratchet-pairwise-codec"
+version = "0.0.88"
+dependencies = [
+ "nostr",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

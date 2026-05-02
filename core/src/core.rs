@@ -13,6 +13,8 @@ use nostr_double_ratchet::{
     RosterEditor, SessionManager, SessionManagerSnapshot, SessionState, UnixSeconds,
 };
 use nostr_double_ratchet_nostr::nostr as codec;
+use nostr_double_ratchet_pairwise_codec as pairwise_codec;
+use nostr_double_ratchet_pairwise_codec::PairwiseRumorKind;
 use nostr_sdk::prelude::{
     Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification, RelayUrl, SubscriptionId,
     Timestamp, ToBech32,
@@ -1608,21 +1610,10 @@ impl AppCore {
             return;
         };
 
-        let payload = match encode_app_direct_message_payload(&normalized_chat_id, text) {
-            Ok(payload) => payload,
-            Err(error) => {
-                self.state.toast = Some(error.to_string());
-                return;
-            }
-        };
         let owner = OwnerPubkey::from_bytes(peer_pubkey.to_bytes());
         let prepared = {
             let logged_in = self.logged_in.as_mut().expect("logged in checked above");
-            let mut rng = OsRng;
-            let mut ctx = ProtocolContext::new(now, &mut rng);
-            logged_in
-                .session_manager
-                .prepare_send(&mut ctx, owner, payload)
+            prepare_direct_send_payloads(logged_in, owner, &normalized_chat_id, text, now)
         };
 
         self.handle_prepared_direct_send(&normalized_chat_id, text, now, prepared);
@@ -1738,7 +1729,7 @@ impl AppCore {
         chat_id: &str,
         text: &str,
         now: UnixSeconds,
-        prepared: Result<nostr_double_ratchet::PreparedSend, Error>,
+        prepared: anyhow::Result<nostr_double_ratchet::PreparedSend>,
     ) {
         match prepared {
             Ok(prepared) => {
@@ -3098,28 +3089,14 @@ impl AppCore {
                     }
                 };
 
-                let payload = match encode_app_direct_message_payload(
+                let logged_in = self.logged_in.as_mut().expect("checked above");
+                prepare_direct_send_payloads(
+                    logged_in,
+                    owner,
                     &pending_message.chat_id,
                     &pending_message.body,
-                ) {
-                    Ok(payload) => payload,
-                    Err(error) => {
-                        self.state.toast = Some(error.to_string());
-                        self.update_message_delivery(
-                            &pending_message.chat_id,
-                            &pending_message.message_id,
-                            DeliveryState::Failed,
-                        );
-                        continue;
-                    }
-                };
-
-                let logged_in = self.logged_in.as_mut().expect("checked above");
-                let mut rng = OsRng;
-                let mut ctx = ProtocolContext::new(now, &mut rng);
-                logged_in
-                    .session_manager
-                    .prepare_send(&mut ctx, owner, payload)
+                    now,
+                )
             };
 
             match prepared {
@@ -4058,35 +4035,58 @@ impl AppCore {
         local_owner: OwnerPubkey,
         sender_owner: OwnerPubkey,
         payload: &[u8],
-    ) -> RoutedChatMessage {
+    ) -> Option<RoutedChatMessage> {
         if let Some(decoded) = decode_app_direct_message_payload(payload) {
             if sender_owner == local_owner {
                 if let Ok((chat_id, _)) = parse_peer_input(&decoded.chat_id) {
                     if chat_id != local_owner.to_string() {
-                        return RoutedChatMessage {
+                        return Some(RoutedChatMessage {
                             chat_id,
                             body: decoded.body,
                             is_outgoing: true,
                             author: Some(self.owner_display_label(&local_owner.to_string())),
-                        };
+                        });
                     }
                 }
             }
 
-            return RoutedChatMessage {
+            return Some(RoutedChatMessage {
                 chat_id: sender_owner.to_string(),
                 body: decoded.body,
                 is_outgoing: false,
                 author: Some(self.owner_display_label(&sender_owner.to_string())),
-            };
+            });
         }
 
-        RoutedChatMessage {
+        if let Ok(decoded) = pairwise_codec::decode(payload) {
+            let PairwiseRumorKind::Message { body, .. } = decoded.kind else {
+                return None;
+            };
+            let is_outgoing = sender_owner == local_owner;
+            let chat_id = if is_outgoing {
+                local_owner.to_string()
+            } else {
+                sender_owner.to_string()
+            };
+            let author_owner = if is_outgoing {
+                local_owner
+            } else {
+                sender_owner
+            };
+            return Some(RoutedChatMessage {
+                chat_id,
+                body,
+                is_outgoing,
+                author: Some(self.owner_display_label(&author_owner.to_string())),
+            });
+        }
+
+        Some(RoutedChatMessage {
             chat_id: sender_owner.to_string(),
             body: String::from_utf8_lossy(payload).into_owned(),
             is_outgoing: false,
             author: Some(self.owner_display_label(&sender_owner.to_string())),
-        }
+        })
     }
 
     fn apply_group_metadata_update(&mut self, group: GroupSnapshot, created_at_secs: u64) {
@@ -4128,8 +4128,11 @@ impl AppCore {
                 );
             }
             None => {
-                let routed = self.route_received_direct_message(local_owner, sender_owner, payload);
-                self.apply_routed_chat_message(routed, created_at_secs);
+                if let Some(routed) =
+                    self.route_received_direct_message(local_owner, sender_owner, payload)
+                {
+                    self.apply_routed_chat_message(routed, created_at_secs);
+                }
             }
         }
 
@@ -5466,6 +5469,50 @@ fn encode_app_direct_message_payload(chat_id: &str, body: &str) -> anyhow::Resul
         chat_id: normalized_chat_id,
         body: body.to_string(),
     })?)
+}
+
+fn encode_pairwise_direct_message_payload(
+    author_owner: OwnerPubkey,
+    body: &str,
+    now: UnixSeconds,
+) -> anyhow::Result<Vec<u8>> {
+    let author = PublicKey::from_slice(&author_owner.to_bytes())?;
+    let millis = now.get().saturating_mul(1000);
+    Ok(pairwise_codec::encode_message(
+        author,
+        body,
+        pairwise_codec::EncodeOptions::new(now.get(), millis),
+    )?)
+}
+
+fn prepare_direct_send_payloads(
+    logged_in: &mut LoggedInState,
+    owner: OwnerPubkey,
+    chat_id: &str,
+    body: &str,
+    now: UnixSeconds,
+) -> anyhow::Result<nostr_double_ratchet::PreparedSend> {
+    let remote_payload = encode_pairwise_direct_message_payload(logged_in.owner_pubkey, body, now)?;
+    let local_sibling_payload = encode_app_direct_message_payload(chat_id, body)?;
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(now, &mut rng);
+
+    let mut prepared =
+        logged_in
+            .session_manager
+            .prepare_remote_send(&mut ctx, owner, remote_payload)?;
+    let local_sibling = logged_in
+        .session_manager
+        .prepare_local_sibling_send(&mut ctx, local_sibling_payload)?;
+
+    prepared.deliveries.extend(local_sibling.deliveries);
+    prepared
+        .invite_responses
+        .extend(local_sibling.invite_responses);
+    prepared.relay_gaps.extend(local_sibling.relay_gaps);
+    prepared.relay_gaps.sort();
+    prepared.relay_gaps.dedup();
+    Ok(prepared)
 }
 
 fn decode_app_direct_message_payload(payload: &[u8]) -> Option<AppDirectMessagePayload> {
