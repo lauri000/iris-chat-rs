@@ -13,6 +13,9 @@ The core rule is:
 the core smaller and move product-specific wire formats into reusable modules that callers may adopt
 or ignore.
 
+For the side-by-side architectural comparison and the rewrite rationale behind this split, see
+[./ARCHITECTURE_COMPARISON.md](./ARCHITECTURE_COMPARISON.md).
+
 ## Layering
 
 ```mermaid

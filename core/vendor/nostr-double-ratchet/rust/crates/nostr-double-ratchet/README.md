@@ -127,7 +127,11 @@ cargo test -p nostr-double-ratchet --manifest-path rust/Cargo.toml
 See [./docs/TUTORIAL.md](./docs/TUTORIAL.md) for the user-facing integration guide.
 See [./docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the current owner/device architecture, invite
 semantics, and recommended integration flow.
+See [./docs/ARCHITECTURE_COMPARISON.md](./docs/ARCHITECTURE_COMPARISON.md) for the side-by-side
+comparison of the `master` and `experimental` boundaries and the rewrite rationale.
 See [./docs/MASTER_PARITY.md](./docs/MASTER_PARITY.md) for the optional interop payload and
 sender-key protocol formats layered above the core ratchet.
+See [./docs/PRIOR_WORK.md](./docs/PRIOR_WORK.md) for the main external Signal, sender-key, and
+group-system references behind the current design discussion.
 See [./docs/SOURCES.md](./docs/SOURCES.md) for the compact source index behind the current group-architecture
 comparisons and tradeoff discussion.

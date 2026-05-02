@@ -2,6 +2,10 @@
 
 Concise evidence index for the current group-architecture discussion.
 
+For the side-by-side architecture comparison and rewrite rationale, see
+[./ARCHITECTURE_COMPARISON.md](./ARCHITECTURE_COMPARISON.md).
+For the main external Signal and sender-key references, see [./PRIOR_WORK.md](./PRIOR_WORK.md).
+
 ## Current Implementations
 
 ### `iris` current Rust group model
