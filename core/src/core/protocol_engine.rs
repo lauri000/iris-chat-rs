@@ -4,6 +4,7 @@ const PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
 const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
+const SENDER_KEY_REPAIR_RETRY_DELAY_SECS: u64 = 30;
 const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -24,6 +25,8 @@ struct ProtocolEnginePersistedState {
     #[serde(default)]
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
+    #[serde(default)]
+    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     #[serde(default)]
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     #[serde(default)]
@@ -158,6 +161,20 @@ struct ProtocolPendingGroupPairwisePayload {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct ProtocolPendingGroupSenderKeyRepair {
+    group_id: String,
+    sender_event_pubkey_hex: String,
+    key_id: u32,
+    message_number: u32,
+    #[serde(default)]
+    required_revision: Option<u64>,
+    created_at_secs: u64,
+    last_requested_at_secs: u64,
+    request_count: u32,
+    next_retry_at_secs: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ProtocolPendingDecryptedDelivery {
     sender: PublicKey,
     sender_device: Option<PublicKey>,
@@ -286,6 +303,8 @@ pub(super) struct ProtocolEngineDebugSnapshot {
     pub(super) pending_group_fanout_count: usize,
     pub(super) pending_group_pairwise_payload_count: usize,
     pub(super) pending_group_sender_key_message_count: usize,
+    pub(super) pending_group_sender_key_repair_count: usize,
+    pub(super) pending_group_sender_key_repair_last_requested_at_secs: u64,
     pub(super) pending_outbound_targets: Vec<String>,
     #[serde(default)]
     pub(super) pending_outbound_details: Vec<ProtocolPendingOutboundDebug>,
@@ -333,6 +352,7 @@ pub(super) struct ProtocolEngine {
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
+    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,
@@ -349,6 +369,7 @@ struct ProtocolEngineCheckpoint {
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
+    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,
@@ -386,6 +407,7 @@ impl ProtocolEngine {
                         pending_group_fanouts: state.pending_group_fanouts,
                         pending_group_pairwise_payloads: state.pending_group_pairwise_payloads,
                         pending_group_sender_key_messages: state.pending_group_sender_key_messages,
+                        pending_group_sender_key_repairs: state.pending_group_sender_key_repairs,
                         pending_decrypted_deliveries: state.pending_decrypted_deliveries,
                         subscription_generation: state.subscription_generation,
                         last_backfill_attempt_secs: state.last_backfill_attempt_secs,
@@ -450,6 +472,7 @@ impl ProtocolEngine {
             pending_group_fanouts: Vec::new(),
             pending_group_pairwise_payloads: Vec::new(),
             pending_group_sender_key_messages: Vec::new(),
+            pending_group_sender_key_repairs: Vec::new(),
             pending_decrypted_deliveries: Vec::new(),
             subscription_generation: 0,
             last_backfill_attempt_secs: 0,
@@ -489,6 +512,13 @@ impl ProtocolEngine {
             pending_group_fanout_count: self.pending_group_fanouts.len(),
             pending_group_pairwise_payload_count: self.pending_group_pairwise_payloads.len(),
             pending_group_sender_key_message_count: self.pending_group_sender_key_messages.len(),
+            pending_group_sender_key_repair_count: self.pending_group_sender_key_repairs.len(),
+            pending_group_sender_key_repair_last_requested_at_secs: self
+                .pending_group_sender_key_repairs
+                .iter()
+                .map(|repair| repair.last_requested_at_secs)
+                .max()
+                .unwrap_or_default(),
             pending_outbound_targets: self.queued_message_diagnostics(None),
             pending_outbound_details: self.pending_outbound_debug_details(),
             pending_group_fanout_targets: self.queued_group_targets(),
@@ -846,6 +876,7 @@ impl ProtocolEngine {
             pending_group_fanouts: self.pending_group_fanouts.clone(),
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
             pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
+            pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
@@ -861,6 +892,7 @@ impl ProtocolEngine {
         self.pending_group_fanouts = checkpoint.pending_group_fanouts;
         self.pending_group_pairwise_payloads = checkpoint.pending_group_pairwise_payloads;
         self.pending_group_sender_key_messages = checkpoint.pending_group_sender_key_messages;
+        self.pending_group_sender_key_repairs = checkpoint.pending_group_sender_key_repairs;
         self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
         self.subscription_generation = checkpoint.subscription_generation;
         self.last_backfill_attempt_secs = checkpoint.last_backfill_attempt_secs;
@@ -1488,6 +1520,20 @@ impl ProtocolEngine {
 
         match result {
             Ok(Some(event)) => {
+                if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
+                    let (effects, queued_targets) = self.sender_key_repair_response_effects(
+                        repair.requester_owner,
+                        &repair.request,
+                        NdrUnixSeconds(unix_now().get()),
+                    )?;
+                    self.persist()?;
+                    return Ok(ProtocolGroupIncomingResult {
+                        effects,
+                        queued_targets,
+                        consumed: true,
+                        ..Default::default()
+                    });
+                }
                 let mut events = vec![event];
                 let retry = self.retry_pending_group_inputs(NdrUnixSeconds(unix_now().get()))?;
                 events.extend(retry.events);
@@ -1829,7 +1875,17 @@ impl ProtocolEngine {
             };
             match outcome {
                 Ok(Some(event)) => {
-                    result.events.push(event);
+                    if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
+                        let (effects, queued_targets) = self.sender_key_repair_response_effects(
+                            repair.requester_owner,
+                            &repair.request,
+                            now,
+                        )?;
+                        result.effects.extend(effects);
+                        result.queued_targets.extend(queued_targets);
+                    } else {
+                        result.events.push(event);
+                    }
                     pairwise_changed = true;
                 }
                 Ok(None) => {
@@ -1864,6 +1920,9 @@ impl ProtocolEngine {
             result.effects.extend(outcome.effects);
         }
         self.pending_group_sender_key_messages = still_sender_keys;
+        result
+            .effects
+            .extend(self.retry_pending_group_sender_key_repairs(now)?);
         if pairwise_changed
             || sender_keys_changed
             || !result.events.is_empty()
@@ -2440,6 +2499,10 @@ impl ProtocolEngine {
         &mut self,
         message: GroupSenderKeyMessage,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
+        let message_repair_group_id = message.group_id.clone();
+        let message_repair_sender = message.sender_event_pubkey;
+        let message_repair_key_id = message.key_id;
+        let message_repair_number = message.message_number;
         let result = match self
             .group_manager
             .handle_sender_key_message(message.clone())
@@ -2457,6 +2520,12 @@ impl ProtocolEngine {
         };
         match result {
             GroupSenderKeyHandleResult::Event(event) => {
+                self.clear_group_sender_key_repairs(
+                    &message_repair_group_id,
+                    message_repair_sender,
+                    message_repair_key_id,
+                    message_repair_number,
+                );
                 self.persist()?;
                 Ok(ProtocolGroupIncomingResult {
                     events: vec![event],
@@ -2464,19 +2533,178 @@ impl ProtocolEngine {
                     ..Default::default()
                 })
             }
-            GroupSenderKeyHandleResult::PendingDistribution { .. }
-            | GroupSenderKeyHandleResult::PendingRevision { .. } => {
+            GroupSenderKeyHandleResult::PendingDistribution {
+                group_id,
+                sender_event_pubkey,
+                key_id,
+            } => {
+                let request = SenderKeyRepairRequest {
+                    group_id,
+                    sender_event_pubkey,
+                    key_id,
+                    message_number: message_repair_number,
+                    required_revision: None,
+                    created_at: NdrUnixSeconds(unix_now().get()),
+                };
+                let effects = self
+                    .sender_key_repair_request_effects(request, NdrUnixSeconds(unix_now().get()))?;
                 Ok(ProtocolGroupIncomingResult {
                     consumed: true,
                     pending: true,
+                    effects,
                     ..Default::default()
                 })
             }
-            GroupSenderKeyHandleResult::Ignored => Ok(ProtocolGroupIncomingResult {
-                consumed: true,
-                ..Default::default()
-            }),
+            GroupSenderKeyHandleResult::PendingRevision {
+                group_id,
+                required_revision,
+                ..
+            } => {
+                let request = SenderKeyRepairRequest {
+                    group_id,
+                    sender_event_pubkey: message_repair_sender,
+                    key_id: message_repair_key_id,
+                    message_number: message_repair_number,
+                    required_revision: Some(required_revision),
+                    created_at: NdrUnixSeconds(unix_now().get()),
+                };
+                let effects = self
+                    .sender_key_repair_request_effects(request, NdrUnixSeconds(unix_now().get()))?;
+                Ok(ProtocolGroupIncomingResult {
+                    consumed: true,
+                    pending: true,
+                    effects,
+                    ..Default::default()
+                })
+            }
+            GroupSenderKeyHandleResult::Ignored => {
+                self.clear_group_sender_key_repairs(
+                    &message_repair_group_id,
+                    message_repair_sender,
+                    message_repair_key_id,
+                    message_repair_number,
+                );
+                Ok(ProtocolGroupIncomingResult {
+                    consumed: true,
+                    ..Default::default()
+                })
+            }
         }
+    }
+
+    fn sender_key_repair_request_effects(
+        &mut self,
+        request: SenderKeyRepairRequest,
+        now: NdrUnixSeconds,
+    ) -> anyhow::Result<Vec<ProtocolEffect>> {
+        let sender_event_pubkey_hex = request.sender_event_pubkey.to_hex();
+        let position = self
+            .pending_group_sender_key_repairs
+            .iter()
+            .position(|pending| {
+                pending.group_id == request.group_id
+                    && pending.sender_event_pubkey_hex == sender_event_pubkey_hex
+                    && pending.key_id == request.key_id
+                    && pending.message_number == request.message_number
+                    && pending.required_revision == request.required_revision
+            });
+        let index = if let Some(index) = position {
+            index
+        } else {
+            self.pending_group_sender_key_repairs
+                .push(ProtocolPendingGroupSenderKeyRepair {
+                    group_id: request.group_id.clone(),
+                    sender_event_pubkey_hex,
+                    key_id: request.key_id,
+                    message_number: request.message_number,
+                    required_revision: request.required_revision,
+                    created_at_secs: now.get(),
+                    last_requested_at_secs: 0,
+                    request_count: 0,
+                    next_retry_at_secs: 0,
+                });
+            self.pending_group_sender_key_repairs.len() - 1
+        };
+        if self.pending_group_sender_key_repairs[index].next_retry_at_secs > now.get() {
+            return Ok(Vec::new());
+        }
+
+        let mut rng = OsRng;
+        let mut ctx = ProtocolContext::new(now, &mut rng);
+        let prepared = self.group_manager.request_sender_key_repair(
+            &mut self.session_manager,
+            &mut ctx,
+            &request,
+        )?;
+        let output = self.protocol_group_send_from_prepared(&prepared, None)?;
+        if let Some(pending) = self.pending_group_sender_key_repairs.get_mut(index) {
+            pending.last_requested_at_secs = now.get();
+            pending.request_count = pending.request_count.saturating_add(1);
+            pending.next_retry_at_secs =
+                now.get().saturating_add(SENDER_KEY_REPAIR_RETRY_DELAY_SECS);
+        }
+        Ok(output.effects)
+    }
+
+    fn retry_pending_group_sender_key_repairs(
+        &mut self,
+        now: NdrUnixSeconds,
+    ) -> anyhow::Result<Vec<ProtocolEffect>> {
+        let requests = self
+            .pending_group_sender_key_repairs
+            .iter()
+            .filter(|pending| pending.next_retry_at_secs <= now.get())
+            .filter_map(|pending| {
+                let sender = PublicKey::parse(&pending.sender_event_pubkey_hex).ok()?;
+                Some(SenderKeyRepairRequest {
+                    group_id: pending.group_id.clone(),
+                    sender_event_pubkey: ndr_device(sender),
+                    key_id: pending.key_id,
+                    message_number: pending.message_number,
+                    required_revision: pending.required_revision,
+                    created_at: NdrUnixSeconds(pending.created_at_secs),
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut effects = Vec::new();
+        for request in requests {
+            effects.extend(self.sender_key_repair_request_effects(request, now)?);
+        }
+        Ok(effects)
+    }
+
+    fn sender_key_repair_response_effects(
+        &mut self,
+        requester_owner: NdrOwnerPubkey,
+        request: &SenderKeyRepairRequest,
+        now: NdrUnixSeconds,
+    ) -> anyhow::Result<(Vec<ProtocolEffect>, Vec<String>)> {
+        let mut rng = OsRng;
+        let mut ctx = ProtocolContext::new(now, &mut rng);
+        let prepared = self.group_manager.respond_to_sender_key_repair_request(
+            &mut self.session_manager,
+            &mut ctx,
+            requester_owner,
+            request,
+        )?;
+        let output = self.protocol_group_send_from_prepared(&prepared, None)?;
+        Ok((output.effects, output.queued_targets))
+    }
+
+    fn clear_group_sender_key_repairs(
+        &mut self,
+        group_id: &str,
+        sender_event_pubkey: NdrDevicePubkey,
+        key_id: u32,
+        message_number: u32,
+    ) {
+        let sender_event_pubkey_hex = sender_event_pubkey.to_hex();
+        self.pending_group_sender_key_repairs.retain(|pending| {
+            !(pending.group_id == group_id
+                && pending.sender_event_pubkey_hex == sender_event_pubkey_hex
+                && pending.key_id == key_id
+                && pending.message_number == message_number)
+        });
     }
 
     fn upsert_pending_outbound(&mut self, pending: ProtocolPendingOutbound) {
@@ -2720,6 +2948,7 @@ impl ProtocolEngine {
             pending_group_fanouts: self.pending_group_fanouts.clone(),
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
             pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
+            pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
             pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
