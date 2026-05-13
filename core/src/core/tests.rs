@@ -2295,6 +2295,46 @@ fn invite_response_observation_installs_session_author_state() {
 }
 
 #[test]
+fn invite_response_replay_after_consumed_invite_is_idempotent() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
+            1,
+        )
+        .expect("peer appkeys");
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    let (_peer_session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            Some(peer_device.public_key().to_hex()),
+            Some(peer_owner.public_key()),
+        )
+        .expect("peer accepts invite");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+
+    engine
+        .observe_invite_response_event(&response_event)
+        .expect("first invite response");
+    let duplicate = engine
+        .observe_invite_response_event(&response_event)
+        .expect("duplicate invite response should be ignored");
+    assert!(duplicate.direct_results.is_empty());
+    assert!(duplicate.direct_messages.is_empty());
+    assert!(duplicate.effects.is_empty());
+    assert!(duplicate.group_result.events.is_empty());
+    assert!(duplicate.group_result.effects.is_empty());
+}
+
+#[test]
 fn appcore_direct_message_from_unverified_claimed_owner_retries_after_appkeys() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -7832,6 +7872,14 @@ fn ordered_protocol_events(effects: &[ProtocolEffect]) -> Vec<Event> {
         .collect()
 }
 
+fn is_non_target_direct_message_error(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("Invalid header")
+        || message.contains("invalid header")
+        || message.contains("Failed to decrypt header with available keys")
+        || message.contains("invalid HMAC")
+}
+
 fn sender_key_outer_count(effects: &[ProtocolEffect], event_ids: &[String]) -> usize {
     protocol_payload_events_for_result(effects, event_ids)
         .into_iter()
@@ -7896,15 +7944,7 @@ fn apply_protocol_event_to_engine(
     if parse_message_event(event).is_ok() {
         let decrypted = match engine.process_direct_message_event(event) {
             Ok(decrypted) => decrypted,
-            Err(error)
-                if error.to_string().contains("Invalid header")
-                    || error.to_string().contains("invalid header")
-                    || error
-                        .to_string()
-                        .contains("Failed to decrypt header with available keys") =>
-            {
-                None
-            }
+            Err(error) if is_non_target_direct_message_error(&error) => None,
             Err(error) => panic!("process pairwise protocol event: {error}"),
         };
         if let Some(decrypted) = decrypted {
@@ -7958,15 +7998,7 @@ fn apply_protocol_event_to_engine_once(
     if parse_message_event(event).is_ok() {
         let decrypted = match engine.process_direct_message_event(event) {
             Ok(decrypted) => decrypted,
-            Err(error)
-                if error.to_string().contains("Invalid header")
-                    || error.to_string().contains("invalid header")
-                    || error
-                        .to_string()
-                        .contains("Failed to decrypt header with available keys") =>
-            {
-                None
-            }
+            Err(error) if is_non_target_direct_message_error(&error) => None,
             Err(error) => panic!("process pairwise protocol event: {error}"),
         };
         if let Some(decrypted) = decrypted {
@@ -9437,13 +9469,12 @@ fn appcore_sender_key_stochastic_group_soak() {
                 &mut devices[recipient_index].engine,
                 &sent.effects,
             );
-            assert!(group_events_contain_body(
-                &events,
-                &group_id,
-                sender_owner,
-                sender_device,
-                &body
-            ));
+            assert!(
+                group_events_contain_body(&events, &group_id, sender_owner, sender_device, &body),
+                "missing soak body at step {step}; sender_index={sender_index}; recipient_index={recipient_index}; active={active:?}; body={}; events={events:?}; recipient_debug={:?}",
+                String::from_utf8_lossy(&body),
+                devices[recipient_index].engine.debug_snapshot()
+            );
         }
         let removed_events =
             deliver_protocol_effects_to_engine(&mut devices[1].engine, &sent.effects);
