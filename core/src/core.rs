@@ -345,6 +345,7 @@ pub struct AppCore {
     device_invite_poll_token: u64,
     message_expiry_token: u64,
     protocol_reconnect_token: u64,
+    protocol_liveness_token: u64,
     defer_owner_app_keys_publish: bool,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
     relay_transport_runtime: RelayTransportRuntime,

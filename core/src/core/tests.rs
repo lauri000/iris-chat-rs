@@ -409,7 +409,7 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
         },
     );
 
-    core.handle_protocol_subscription_liveness_check(core.protocol_reconnect_token);
+    core.handle_protocol_subscription_liveness_check(core.protocol_liveness_token);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
@@ -957,6 +957,40 @@ fn successful_protocol_subscription_apply_sets_applied_plan() {
 }
 
 #[test]
+fn liveness_scheduling_does_not_invalidate_subscription_apply_completion() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-apply-liveness-generation", &owner, &device);
+    let plan = protocol_plan_for_test(vec![device.public_key()], Vec::new());
+    core.protocol_subscription_runtime.desired_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.applying_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+    core.protocol_subscription_runtime.reconcile_token = 9;
+    let apply_generation = core.protocol_reconnect_token;
+
+    core.schedule_protocol_subscription_liveness_check(Duration::from_secs(2));
+
+    core.handle_protocol_subscription_reconcile_completed(
+        apply_generation,
+        9,
+        "test_success_after_liveness_schedule".to_string(),
+        Some(plan.clone()),
+        true,
+        None,
+        vec![("wss://relay.example".to_string(), RelayStatus::Connected)],
+        1,
+        1,
+        1,
+    );
+
+    assert!(
+        !core.protocol_subscription_runtime.refresh_in_flight,
+        "liveness timers must not leave subscription apply permanently in-flight"
+    );
+    assert_eq!(core.protocol_subscription_runtime.applied_plan, Some(plan));
+}
+
+#[test]
 fn stale_protocol_subscription_reconcile_completion_is_ignored() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -993,8 +1027,16 @@ fn liveness_token_does_not_stale_subscription_completion() {
     core.protocol_subscription_runtime.refresh_in_flight = true;
     core.protocol_subscription_runtime.reconcile_token = 9;
     let apply_generation = core.protocol_reconnect_token;
+    let liveness_generation = core.protocol_liveness_token;
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
-    assert_ne!(core.protocol_reconnect_token, apply_generation);
+    assert_eq!(
+        core.protocol_reconnect_token, apply_generation,
+        "liveness scheduling must not invalidate subscription apply generation"
+    );
+    assert_ne!(
+        core.protocol_liveness_token, liveness_generation,
+        "liveness scheduling should still advance the independent liveness token"
+    );
 
     core.handle_protocol_subscription_reconcile_completed(
         apply_generation,
@@ -1083,7 +1125,7 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_missing_appkeys_when_conn
     );
 
     core.debug_log.clear();
-    let token = core.protocol_reconnect_token;
+    let token = core.protocol_liveness_token;
     core.handle_protocol_subscription_liveness_check(token);
 
     assert!(
@@ -1110,7 +1152,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
     );
     core.protocol_subscription_runtime.liveness_due_at = None;
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
-    let first_token = core.protocol_reconnect_token;
+    let first_token = core.protocol_liveness_token;
     let first_due = core
         .protocol_subscription_runtime
         .liveness_due_at
@@ -1118,7 +1160,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
 
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
     assert_eq!(
-        core.protocol_reconnect_token, first_token,
+        core.protocol_liveness_token, first_token,
         "a later/equal liveness request must not cancel the pending reconnect"
     );
     assert_eq!(
@@ -1127,7 +1169,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
     );
 
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(2));
-    let fast_token = core.protocol_reconnect_token;
+    let fast_token = core.protocol_liveness_token;
     let fast_due = core
         .protocol_subscription_runtime
         .liveness_due_at
@@ -1143,7 +1185,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
 
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
     assert_eq!(
-        core.protocol_reconnect_token, fast_token,
+        core.protocol_liveness_token, fast_token,
         "a later liveness request must not starve the fast reconnect"
     );
     assert_eq!(
@@ -1248,7 +1290,7 @@ fn targeted_protocol_fetch_is_single_flight() {
 }
 
 #[test]
-fn protocol_fetch_start_is_rate_limited() {
+fn broad_protocol_fetch_start_is_rate_limited() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let mut core = logged_in_test_core("protocol-fetch-rate-limit", &owner, &device);
@@ -1302,6 +1344,61 @@ fn protocol_fetch_rate_limit_tolerates_future_start_time() {
             .tracked_peer_catch_up_due_at
             .is_some(),
         "future timestamp should schedule one coalesced retry"
+    );
+}
+
+#[test]
+fn protocol_fetch_rate_limit_expires_without_panic() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("protocol-fetch-rate-limit-expired", &owner, &device);
+
+    core.protocol_subscription_runtime
+        .protocol_fetch_last_started_at = Some(Instant::now() - Duration::from_secs(31));
+    core.debug_log.clear();
+
+    assert!(
+        !core.fetch_recent_protocol_state(),
+        "expired rate limit should not panic or block broad catch-up fetches"
+    );
+    assert!(
+        core.debug_log
+            .iter()
+            .all(|entry| !entry.detail.contains("rate limited")),
+        "expired rate limit should not be reported as active"
+    );
+}
+
+#[test]
+fn targeted_protocol_fetch_bypasses_broad_catch_up_rate_limit() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core(
+        "targeted-protocol-fetch-bypasses-rate-limit",
+        &owner,
+        &device,
+    );
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.protocol_subscription_runtime
+        .protocol_fetch_last_started_at = Some(Instant::now());
+    core.debug_log.clear();
+
+    let filters = vec![Filter::new()
+        .author(peer.public_key())
+        .kind(Kind::Custom(APP_KEYS_EVENT_KIND as u16))];
+    assert!(
+        core.fetch_protocol_state_for_filters(filters, "test"),
+        "targeted missing-state fetch should not wait behind broad catch-up rate limits"
+    );
+    assert!(
+        core.debug_log.iter().any(|entry| {
+            entry.category == "protocol.engine_fetch.fetch" && entry.detail.contains("filters=1")
+        }),
+        "targeted fetch should start immediately"
     );
 }
 
@@ -1371,7 +1468,7 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
     );
 
     core.debug_log.clear();
-    let token = core.protocol_reconnect_token;
+    let token = core.protocol_liveness_token;
     core.handle_protocol_subscription_liveness_check(token);
 
     assert!(
