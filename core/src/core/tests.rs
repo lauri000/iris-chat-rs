@@ -1353,8 +1353,11 @@ fn protocol_fetch_rate_limit_expires_without_panic() {
     let device = Keys::generate();
     let mut core = logged_in_test_core("protocol-fetch-rate-limit-expired", &owner, &device);
 
+    let Some(expired_started_at) = Instant::now().checked_sub(Duration::from_secs(31)) else {
+        return;
+    };
     core.protocol_subscription_runtime
-        .protocol_fetch_last_started_at = Some(Instant::now() - Duration::from_secs(31));
+        .protocol_fetch_last_started_at = Some(expired_started_at);
     core.debug_log.clear();
 
     assert!(
