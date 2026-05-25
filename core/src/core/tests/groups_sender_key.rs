@@ -975,7 +975,7 @@ fn appcore_sender_key_group_create_prepares_pairwise_metadata_and_distribution()
         "sender-key group creation must not publish a group outer message before app payloads"
     );
     assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &peer_owner.public_key().to_hex()),
+        protocol_targeted_payload_count(&result.publish_registrations, &peer_owner.public_key().to_hex()),
         2,
         "the peer should receive both metadata and sender-key distribution control messages"
     );
@@ -1014,7 +1014,7 @@ fn appcore_sender_key_add_member_sends_current_distribution_pairwise() {
         "add-member control traffic should remain pairwise"
     );
     assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &peer_owner.public_key().to_hex()),
+        protocol_targeted_payload_count(&result.publish_registrations, &peer_owner.public_key().to_hex()),
         2
     );
 }
@@ -1059,9 +1059,14 @@ fn appcore_sender_key_remove_member_rotates_key_only_to_remaining_members() {
         "remove-member control traffic should remain pairwise"
     );
     assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &bob_owner.public_key().to_hex()),
-        3,
-        "removal should publish metadata/control events for affected members"
+        protocol_targeted_payload_count(&result.publish_registrations, &bob_owner.public_key().to_hex()),
+        2,
+        "remaining member should receive metadata and rotated sender key"
+    );
+    assert_eq!(
+        protocol_targeted_payload_count(&result.publish_registrations, &carol_owner.public_key().to_hex()),
+        1,
+        "removed member should receive metadata but not the rotated sender key"
     );
 }
 
@@ -1112,11 +1117,16 @@ fn appcore_legacy_pairwise_group_metadata_is_ignored() {
             b"legacy pairwise body".to_vec(),
             Some("legacy-inner".to_string()),
         )
-        .expect_err("ignored legacy metadata must not install an outgoing group");
-    assert!(
-        error.to_string().contains("unknown group")
-            || error.to_string().contains("unsupported legacy group protocol"),
-        "unexpected error: {error}"
+        .expect("send legacy pairwise group payload");
+    let payload_events = protocol_payload_events_for_result(&result.effects, &result.event_ids);
+
+    assert_eq!(result.event_ids.len(), 1);
+    assert_eq!(payload_events.len(), 1);
+    assert!(parse_message_event(payload_events[0]).is_ok());
+    assert!(parse_group_sender_key_message_event(payload_events[0]).is_err());
+    assert_eq!(
+        protocol_targeted_payload_count(&result.publish_registrations, &peer_owner.public_key().to_hex()),
+        1
     );
 }
 

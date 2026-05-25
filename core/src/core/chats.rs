@@ -547,7 +547,7 @@ impl AppCore {
                     expires_at_secs,
                     delivery,
                 );
-                self.process_protocol_engine_effects(result.effects);
+                self.process_protocol_engine_effects(result.effects, &result.publish_registrations);
                 self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
                 self.reconcile_outgoing_message_delivery(&normalized_chat_id, &result.message_id);
                 if !result.queued_targets.is_empty() {
@@ -625,15 +625,18 @@ impl AppCore {
                     .iter()
                     .filter(|effect| matches!(effect, ProtocolEffect::Publish(_)))
                     .count();
-                let delivery_publish_effects = result
-                    .effects
-                    .iter()
-                    .filter(|effect| {
-                        matches!(
-                            effect,
-                            ProtocolEffect::Publish(publish) if publish.inner_event_id.is_some()
-                        )
+                let staged_effects = result
+                    .publish_registrations
+                    .values()
+                    .filter(|registration| {
+                        registration.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL
+                            || registration.label == APPCORE_PROTOCOL_FIRST_CONTACT_LABEL
                     })
+                    .count();
+                let targeted_effects = result
+                    .publish_registrations
+                    .values()
+                    .filter(|registration| registration.target_owner_pubkey_hex.is_some())
                     .count();
                 self.push_debug_log(
                     "message.group.send.appcore",
@@ -641,10 +644,11 @@ impl AppCore {
                         "chat_id={chat_id} message_id={message_id} event_ids={} effects={} signed={} delivery_publish={} queued_targets={} targets={}",
                         result.event_ids.len(),
                         result.effects.len(),
+                        staged_effects,
                         publish_effects,
-                        delivery_publish_effects,
+                        targeted_effects,
                         result.queued_targets.len(),
-                        summarize_group_send_effect_targets(&result.effects)
+                        summarize_group_send_effect_targets(&result.publish_registrations)
                     ),
                 );
                 self.push_outgoing_message_with_id(
@@ -655,7 +659,7 @@ impl AppCore {
                     expires_at_secs,
                     delivery,
                 );
-                self.process_protocol_engine_effects(result.effects);
+                self.process_protocol_engine_effects(result.effects, &result.publish_registrations);
                 self.sync_message_delivery_trace(chat_id, &message_id);
                 self.reconcile_outgoing_message_delivery(chat_id, &message_id);
                 if !result.queued_targets.is_empty() {
@@ -823,8 +827,7 @@ impl AppCore {
 
     pub(super) fn reconcile_outgoing_message_delivery(&mut self, chat_id: &str, message_id: &str) {
         let pending_relay = self.pending_relay_publishes.values().any(|pending| {
-            pending.chat_id.as_deref() == Some(chat_id)
-                && pending.inner_event_id.as_deref() == Some(message_id)
+            pending.blocks_remote_delivery_for(chat_id, message_id, local_owner.as_deref())
         });
         let queued_protocol = self
             .protocol_engine
@@ -1290,7 +1293,7 @@ impl AppCore {
             .map(|engine| engine.send_group_payload(&group_id, payload, inner_event_id.clone()));
         match result {
             Some(Ok(result)) => {
-                self.process_protocol_engine_effects(result.effects);
+                self.process_protocol_engine_effects(result.effects, &result.publish_registrations);
                 if !result.queued_targets.is_empty() {
                     self.request_protocol_subscription_refresh();
                     if self.fetch_recent_protocol_state() {
@@ -1339,10 +1342,44 @@ impl AppCore {
                 content.as_bytes(),
                 sender_owner,
                 sender_device,
-                true,
-            )
-        {
-            return;
+            ) {
+                Ok(group_outcome) => group_outcome,
+                Err(error) => {
+                    self.push_debug_log("appcore.protocol.group.payload.error", error.to_string());
+                    return;
+                }
+            };
+            if !group_outcome.events.is_empty() {
+                if !group_outcome.queued_targets.is_empty() {
+                    self.handle_queued_protocol_targets(
+                        "group.pairwise",
+                        &group_outcome.queued_targets,
+                    );
+                }
+                for group_event in group_outcome.events {
+                    self.apply_group_decrypted_event(group_event);
+                }
+                self.process_protocol_engine_effects(
+                    group_outcome.effects,
+                    &group_outcome.publish_registrations,
+                );
+                self.request_protocol_subscription_refresh();
+                return;
+            }
+            if group_outcome.consumed {
+                if !group_outcome.queued_targets.is_empty() {
+                    self.handle_queued_protocol_targets(
+                        "group.pairwise",
+                        &group_outcome.queued_targets,
+                    );
+                }
+                self.process_protocol_engine_effects(
+                    group_outcome.effects,
+                    &group_outcome.publish_registrations,
+                );
+                self.request_protocol_subscription_refresh();
+                return;
+            }
         }
 
         let effective_sender_owner = self.direct_message_display_sender_owner(
@@ -1859,6 +1896,47 @@ pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMes
         delivery_trace: message.delivery_trace.clone(),
         source_event_id: message.source_event_id.clone(),
     }
+}
+
+fn summarize_group_send_effect_targets(registrations: &ProtocolPublishRegistrations) -> String {
+    let mut targets = Vec::new();
+    for (event_id, registration) in registrations {
+        let stage = match registration.label {
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL => "staged_bootstrap",
+            APPCORE_PROTOCOL_FIRST_CONTACT_LABEL => "staged_payload",
+            _ if registration.target_owner_pubkey_hex.is_some()
+                || registration.target_device_id.is_some() =>
+            {
+                "targeted"
+            }
+            _ => "signed",
+        };
+        targets.push(format!(
+            "{stage}:{}/{}:{}",
+            registration
+                .target_owner_pubkey_hex
+                .as_deref()
+                .unwrap_or(""),
+            registration.target_device_id.as_deref().unwrap_or(""),
+            event_id
+        ));
+    }
+    targets.join("|")
+}
+
+fn delivery_trace_for_source_event(source_event_id: Option<&str>) -> MessageDeliveryTraceSnapshot {
+    let mut trace = MessageDeliveryTraceSnapshot::default();
+    if let Some(source_event_id) = source_event_id {
+        trace.outer_event_ids.push(source_event_id.to_string());
+    }
+    trace
+}
+
+fn push_unique(values: &mut Vec<String>, value: &str) {
+    if values.iter().any(|existing| existing == value) {
+        return;
+    }
+    values.push(value.to_string());
 }
 
 pub(super) fn message_order(message: &ChatMessageSnapshot) -> u64 {

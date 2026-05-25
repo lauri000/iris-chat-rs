@@ -329,31 +329,20 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
             .contains(&peer_laptop.public_key().to_hex()),
         "missing peer laptop should remain queued"
     );
-    let bootstrap_events = protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND);
-    let bootstrap_publishes = result
-        .effects
-        .iter()
-        .filter_map(|effect| match effect {
-            ProtocolEffect::Publish(publish)
-                if publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND =>
-            {
-                Some(publish)
-            }
-            _ => None,
-        })
+    let bootstrap_events = protocol_publish_events_for_label(
+        &result.effects,
+        &result.publish_registrations,
+        APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+    );
+    let bootstrap_registrations = result
+        .publish_registrations
+        .values()
+        .filter(|registration| registration.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL)
         .collect::<Vec<_>>();
-    let payload_publishes = result
-        .effects
-        .iter()
-        .filter_map(|effect| match effect {
-            ProtocolEffect::Publish(publish)
-                if publish.chat_id == peer_owner.public_key().to_hex()
-                    && publish.inner_event_id.as_deref() == Some(result.message_id.as_str()) =>
-            {
-                Some(publish)
-            }
-            _ => None,
-        })
+    let payload_registrations = result
+        .publish_registrations
+        .values()
+        .filter(|registration| registration.label == APPCORE_PROTOCOL_FIRST_CONTACT_LABEL)
         .collect::<Vec<_>>();
     assert!(
         bootstrap_events
@@ -362,14 +351,22 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
         "bootstrap phase should contain the invite response"
     );
     assert_eq!(
-        bootstrap_publishes[0].inner_event_id.as_deref(),
-        None,
-        "bootstrap publish should not carry message delivery metadata"
+        bootstrap_registrations[0].inner_event_id.as_deref(),
+        Some(result.message_id.as_str()),
+        "bootstrap publish must be tied to the app message so payload can wait on it"
     );
     assert_eq!(
-        payload_publishes.len(),
+        bootstrap_registrations[0].target_owner_pubkey_hex.as_deref(),
+        Some(peer_owner.public_key().to_hex().as_str())
+    );
+    assert_eq!(
+        payload_registrations.len(),
         1,
         "payload phase should contain the ready phone delivery"
+    );
+    assert_eq!(
+        payload_registrations[0].target_owner_pubkey_hex.as_deref(),
+        Some(peer_owner.public_key().to_hex().as_str())
     );
 
     let mut ctx = ProtocolContext::new(NdrUnixSeconds(120), &mut rng);
@@ -465,7 +462,11 @@ fn appcore_ownerless_invite_uses_known_roster_owner_for_first_contact() {
         result.queued_targets
     );
     assert!(
-        protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND)
+        protocol_publish_events_for_label(
+            &result.effects,
+            &result.publish_registrations,
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+        )
         .iter()
         .any(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
         "first contact should publish an invite response for ownerless peer invites"
@@ -661,6 +662,7 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
 
     let local_sibling_events = protocol_publish_events_for_target(
         &result.effects,
+        &result.publish_registrations,
         &owner.public_key().to_hex(),
         &linked_device.public_key().to_hex(),
     );
@@ -795,9 +797,14 @@ fn remote_group_metadata_syncs_to_local_sibling() {
 
     let target_owner_hex = owner.public_key().to_hex();
     let target_device_hex = linked_device.public_key().to_hex();
-    let bootstrap_events = protocol_publish_events_with_kind(&outcome.effects, INVITE_RESPONSE_KIND);
+    let bootstrap_events = protocol_publish_events_for_label(
+        &outcome.effects,
+        &outcome.publish_registrations,
+        APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+    );
     let sibling_payload_events = protocol_publish_events_for_target(
         &outcome.effects,
+        &outcome.publish_registrations,
         &target_owner_hex,
         &target_device_hex,
     );
@@ -946,11 +953,15 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
     let target_owner_hex = owner.public_key().to_hex();
     let target_device_hex = primary_device.public_key().to_hex();
     let metadata_bootstrap_events = if protocol_has_publish_target(
-        &linked_metadata_result.effects,
+        &linked_metadata_result.publish_registrations,
         &target_owner_hex,
         &target_device_hex,
     ) {
-        protocol_publish_events_with_kind(&linked_metadata_result.effects, INVITE_RESPONSE_KIND)
+        protocol_publish_events_for_label(
+            &linked_metadata_result.effects,
+            &linked_metadata_result.publish_registrations,
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+        )
     } else {
         Vec::new()
     };
@@ -973,17 +984,22 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
             Some("linked-group-inner".to_string()),
         )
         .expect("linked group send");
-    let candidate_message_events = protocol_publish_events_for_target(
+    let local_sibling_events = protocol_publish_events_for_target(
         &result.effects,
+        &result.publish_registrations,
         &target_owner_hex,
         &target_device_hex,
     );
     let local_sibling_bootstrap_events = if protocol_has_publish_target(
-        &result.effects,
+        &result.publish_registrations,
         &target_owner_hex,
         &target_device_hex,
     ) {
-        protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND)
+        protocol_publish_events_for_label(
+            &result.effects,
+            &result.publish_registrations,
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+        )
     } else {
         Vec::new()
     };

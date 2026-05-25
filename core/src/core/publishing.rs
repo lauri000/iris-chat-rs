@@ -30,27 +30,26 @@ impl AppCore {
         label: &'static str,
         completion: Option<(String, String)>,
     ) -> bool {
-        let (inner_event_id, chat_id) = completion
-            .map(|(inner_event_id, chat_id)| (Some(inner_event_id), Some(chat_id)))
+        let (message_id, chat_id) = completion
+            .map(|(message_id, chat_id)| (Some(message_id), Some(chat_id)))
             .unwrap_or((None, None));
-        self.publish_runtime_event_with_metadata(event, label, chat_id, inner_event_id)
-    }
-
-    pub(super) fn publish_protocol_event(&mut self, publish: ProtocolPublish) -> bool {
-        self.publish_runtime_event_with_metadata(
-            publish.event,
-            APPCORE_PROTOCOL_LABEL,
-            Some(publish.chat_id),
-            publish.inner_event_id,
+        self.publish_runtime_event_with_registration(
+            event,
+            ProtocolPublishRegistration {
+                label,
+                message_id,
+                chat_id,
+                inner_event_id: None,
+                target_owner_pubkey_hex: None,
+                target_device_id: None,
+            },
         )
     }
 
-    fn publish_runtime_event_with_metadata(
+    pub(super) fn publish_runtime_event_with_registration(
         &mut self,
         event: Event,
-        label: &'static str,
-        chat_id: Option<String>,
-        inner_event_id: Option<String>,
+        registration: ProtocolPublishRegistration,
     ) -> bool {
         if self.defer_owner_app_keys_publish && is_app_keys_event(&event) {
             self.push_debug_log(
@@ -62,7 +61,8 @@ impl AppCore {
         self.remember_event(event.id.to_string());
         self.emit_nearby_published_event(&event);
         let event_id = event.id.to_string();
-        let stored = self.remember_pending_relay_publish(&event, label, chat_id, inner_event_id);
+        let label = registration.label;
+        let stored = self.remember_pending_relay_publish(&event, registration);
         if !stored {
             return false;
         }
@@ -87,12 +87,27 @@ impl AppCore {
         true
     }
 
+    pub(super) fn queue_runtime_event_for_delayed_publish(
+        &mut self,
+        event: Event,
+        registration: ProtocolPublishRegistration,
+    ) -> bool {
+        if self.defer_owner_app_keys_publish && is_app_keys_event(&event) {
+            self.push_debug_log(
+                "publish.runtime",
+                "label=runtime skipped=defer_owner_app_keys".to_string(),
+            );
+            return false;
+        }
+        self.remember_event(event.id.to_string());
+        self.emit_nearby_published_event(&event);
+        self.remember_pending_relay_publish(&event, registration)
+    }
+
     fn remember_pending_relay_publish(
         &mut self,
         event: &Event,
-        label: &str,
-        chat_id: Option<String>,
-        inner_event_id: Option<String>,
+        registration: ProtocolPublishRegistration,
     ) -> bool {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return false;
@@ -108,10 +123,13 @@ impl AppCore {
         let pending = PendingRelayPublish {
             owner_pubkey_hex,
             event_id: event.id.to_string(),
-            label: label.to_string(),
+            label: registration.label.to_string(),
             event_json,
-            inner_event_id,
-            chat_id,
+            inner_event_id: registration.inner_event_id,
+            target_owner_pubkey_hex: registration.target_owner_pubkey_hex,
+            target_device_id: registration.target_device_id,
+            message_id: registration.message_id,
+            chat_id: registration.chat_id,
             created_at_secs: event.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,
@@ -514,12 +532,28 @@ impl AppCore {
         self.pending_relay_publish_inflight.remove(&event_id);
         self.push_debug_log("publish.runtime", detail.clone());
         let pending = self.pending_relay_publishes.get(&event_id).cloned();
-        let message_ref = pending
+        let success_action = pending
             .as_ref()
-            .and_then(|pending| Some((pending.chat_id.clone()?, pending.inner_event_id.clone()?)));
+            .map(PendingRelayPublish::success_action)
+            .unwrap_or(PendingRelayPublishSuccessAction::None);
+        let message_ref = pending.as_ref().and_then(PendingRelayPublish::message_ref);
         let mut should_retry = false;
         if success {
             self.forget_pending_relay_publish(&event_id);
+            match &success_action {
+                PendingRelayPublishSuccessAction::MarkMessageSent {
+                    message_ref,
+                    target_owner_pubkey_hex,
+                } => {
+                    self.mark_message_publish_succeeded(
+                        &message_ref.chat_id,
+                        &message_ref.message_id,
+                        target_owner_pubkey_hex.as_deref(),
+                    );
+                }
+                PendingRelayPublishSuccessAction::None
+                | PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads => {}
+            }
         } else if let Some(pending) = self.pending_relay_publishes.get_mut(&event_id) {
             if pending.last_error.as_deref() != Some(PENDING_RELAY_PUBLISH_IN_PROGRESS) {
                 pending.attempt_count = pending.attempt_count.saturating_add(1);
@@ -530,27 +564,48 @@ impl AppCore {
             }
             should_retry = true;
         }
-        if let Some((chat_id, message_id)) = message_ref {
+        if let Some(message_ref) = message_ref {
             for relay_url in &relay_urls {
                 self.add_message_transport_channel(
-                    &chat_id,
-                    &message_id,
+                    &message_ref.chat_id,
+                    &message_ref.message_id,
                     &format!("message server: {relay_url}"),
                 );
             }
             if !success {
-                self.update_message_delivery(&chat_id, &message_id, DeliveryState::Queued);
+                self.update_message_delivery(
+                    &message_ref.chat_id,
+                    &message_ref.message_id,
+                    DeliveryState::Queued,
+                );
             }
-            self.sync_message_delivery_trace(&chat_id, &message_id);
-            self.reconcile_outgoing_message_delivery(&chat_id, &message_id);
+            self.sync_message_delivery_trace(&message_ref.chat_id, &message_ref.message_id);
+            self.reconcile_outgoing_message_delivery(&message_ref.chat_id, &message_ref.message_id);
         }
-        if success {
-            self.reconcile_ready_outgoing_message_deliveries();
+        if success
+            && matches!(
+                success_action,
+                PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads
+            )
+        {
+            self.schedule_first_contact_payload_publish();
         }
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
         should_retry
+    }
+
+    pub(super) fn should_delay_first_contact_payload_publish(
+        &self,
+        pending: &PendingRelayPublish,
+    ) -> bool {
+        if !pending.delays_first_contact_payload() {
+            return false;
+        }
+        self.pending_relay_publishes
+            .values()
+            .any(|candidate| candidate.matches_first_contact_bootstrap(pending))
     }
 
     fn forget_pending_relay_publish(&mut self, event_id: &str) {

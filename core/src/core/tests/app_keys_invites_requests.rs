@@ -2165,15 +2165,22 @@ fn queued_runtime_publish_registration_persists_inner_message_id() {
         .expect("outer event");
 
     let event_id = outer_event.id.to_string();
-    assert!(core.publish_protocol_event(ProtocolPublish {
-        event: outer_event,
-        chat_id: chat_id.clone(),
-        inner_event_id: Some(inner_message_id.clone()),
-    }));
+    assert!(core.queue_runtime_event_for_delayed_publish(
+        outer_event,
+        ProtocolPublishRegistration {
+            label: APPCORE_PROTOCOL_LABEL,
+            message_id: Some(inner_message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            inner_event_id: Some(inner_message_id.clone()),
+            target_owner_pubkey_hex: Some(chat_id.clone()),
+            target_device_id: Some(peer.public_key().to_hex()),
+        },
+    ));
     let pending = core
         .pending_relay_publishes
         .get(&event_id)
         .expect("pending publish");
+    assert_eq!(pending.message_id.as_deref(), Some(inner_message_id.as_str()));
     assert_eq!(pending.chat_id.as_deref(), Some(chat_id.as_str()));
     assert_eq!(
         pending.inner_event_id.as_deref(),

@@ -42,18 +42,26 @@ fn protocol_publish_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
     effects
         .iter()
         .filter_map(|effect| match effect {
-            ProtocolEffect::Publish(publish) => Some(&publish.event),
+            ProtocolEffect::Publish(event) => Some(event),
             _ => None,
         })
         .collect()
 }
 
-fn protocol_publish_events_with_kind(effects: &[ProtocolEffect], kind: u32) -> Vec<Event> {
+fn protocol_publish_events_for_label(
+    effects: &[ProtocolEffect],
+    registrations: &ProtocolPublishRegistrations,
+    label: &str,
+) -> Vec<Event> {
     effects
         .iter()
         .filter_map(|effect| match effect {
-            ProtocolEffect::Publish(publish) if publish.event.kind.as_u16() as u32 == kind => {
-                Some(publish.event.clone())
+            ProtocolEffect::Publish(event)
+                if registrations
+                    .get(&event.id.to_string())
+                    .is_some_and(|registration| registration.label == label) =>
+            {
+                Some(event.clone())
             }
             _ => None,
         })
@@ -62,16 +70,22 @@ fn protocol_publish_events_with_kind(effects: &[ProtocolEffect], kind: u32) -> V
 
 fn protocol_publish_events_for_target(
     effects: &[ProtocolEffect],
-    _owner_pubkey_hex: &str,
-    _device_id: &str,
+    registrations: &ProtocolPublishRegistrations,
+    owner_pubkey_hex: &str,
+    device_id: &str,
 ) -> Vec<Event> {
     effects
         .iter()
         .filter_map(|effect| match effect {
-            ProtocolEffect::Publish(publish)
-                if publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND =>
+            ProtocolEffect::Publish(event)
+                if registrations
+                    .get(&event.id.to_string())
+                    .is_some_and(|registration| {
+                        registration.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
+                            && registration.target_device_id.as_deref() == Some(device_id)
+                    }) =>
             {
-                Some(publish.event.clone())
+                Some(event.clone())
             }
             _ => None,
         })
@@ -79,28 +93,25 @@ fn protocol_publish_events_for_target(
 }
 
 fn protocol_has_publish_target(
-    effects: &[ProtocolEffect],
-    _owner_pubkey_hex: &str,
-    _device_id: &str,
+    registrations: &ProtocolPublishRegistrations,
+    owner_pubkey_hex: &str,
+    device_id: &str,
 ) -> bool {
-    effects.iter().any(|effect| {
-        matches!(
-            effect,
-            ProtocolEffect::Publish(publish)
-                if publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
-        )
+    registrations.values().any(|registration| {
+        registration.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
+            && registration.target_device_id.as_deref() == Some(device_id)
     })
 }
 
-fn protocol_targeted_payload_count(effects: &[ProtocolEffect], _owner_pubkey_hex: &str) -> usize {
-    effects
-        .iter()
-        .filter(|effect| {
-            matches!(
-                effect,
-                ProtocolEffect::Publish(publish)
-                    if publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
-            )
+fn protocol_targeted_payload_count(
+    registrations: &ProtocolPublishRegistrations,
+    owner_pubkey_hex: &str,
+) -> usize {
+    registrations
+        .values()
+        .filter(|registration| {
+            registration.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
+                && registration.label != APPCORE_PROTOCOL_BOOTSTRAP_LABEL
         })
         .count()
 }

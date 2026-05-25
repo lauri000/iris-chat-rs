@@ -135,7 +135,7 @@ fn appcore_direct_send_keeps_local_sibling_probe_until_local_appkeys_and_invite_
     assert_eq!(retry.message_id, send.message_id);
     assert!(
         protocol_has_publish_target(
-        &retry.effects,
+            &retry.publish_registrations,
             &owner.public_key().to_hex(),
             &old_device.public_key().to_hex(),
         ),
@@ -198,7 +198,7 @@ fn self_direct_send_retries_to_restored_sibling_after_invite_arrives() {
             result.message_id == send.message_id
                 && !result.queued_targets.contains(&desktop_device.public_key().to_hex())
                 && protocol_has_publish_target(
-        &result.effects,
+                    &result.publish_registrations,
                     &owner.public_key().to_hex(),
                     &desktop_device.public_key().to_hex(),
                 )

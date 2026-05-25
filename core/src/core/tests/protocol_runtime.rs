@@ -580,22 +580,37 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
     let payload = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
         .sign_with_keys(&device)
         .expect("payload event");
+    let bootstrap_id = bootstrap.id.to_string();
     let payload_id = payload.id.to_string();
-    let bootstrap_publish = ProtocolPublish {
-        event: bootstrap,
-        chat_id: chat_id.clone(),
-        inner_event_id: None,
-    };
-    let payload_publish = ProtocolPublish {
-        event: payload,
-        chat_id: chat_id.clone(),
-        inner_event_id: Some(message_id.clone()),
-    };
-
-    core.process_protocol_engine_effects(vec![
-        ProtocolEffect::Publish(bootstrap_publish),
-        ProtocolEffect::Publish(payload_publish),
+    let registrations = BTreeMap::from([
+        (
+            bootstrap_id,
+            ProtocolPublishRegistration {
+                label: APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+                message_id: Some(message_id.clone()),
+                chat_id: Some(chat_id.clone()),
+                inner_event_id: Some(message_id.clone()),
+                target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+                target_device_id: None,
+            },
+        ),
+        (
+            payload_id.clone(),
+            ProtocolPublishRegistration {
+                label: APPCORE_PROTOCOL_FIRST_CONTACT_LABEL,
+                message_id: Some(message_id.clone()),
+                chat_id: Some(chat_id.clone()),
+                inner_event_id: Some(message_id.clone()),
+                target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+                target_device_id: Some(peer.public_key().to_hex()),
+            },
+        ),
     ]);
+
+    core.process_protocol_engine_effects(
+        vec![ProtocolEffect::Publish(bootstrap), ProtocolEffect::Publish(payload)],
+        &registrations,
+    );
 
     let pending = core
         .pending_relay_publishes
@@ -1071,16 +1086,28 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
         .expect("second event");
     let second_event_id = second.id.to_string();
 
-    assert!(core.publish_protocol_event(ProtocolPublish {
-        event: first,
-        chat_id: chat_id.clone(),
-        inner_event_id: Some(message_id.clone()),
-    }));
-    assert!(core.publish_protocol_event(ProtocolPublish {
-        event: second,
-        chat_id: chat_id.clone(),
-        inner_event_id: Some(message_id),
-    }));
+    assert!(core.publish_runtime_event_with_registration(
+        first,
+        ProtocolPublishRegistration {
+            label: APPCORE_PROTOCOL_LABEL,
+            message_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            inner_event_id: Some("inner-message".to_string()),
+            target_owner_pubkey_hex: Some(chat_id.clone()),
+            target_device_id: Some(target_device_id.clone()),
+        },
+    ));
+    assert!(core.publish_runtime_event_with_registration(
+        second,
+        ProtocolPublishRegistration {
+            label: APPCORE_PROTOCOL_LABEL,
+            message_id: Some(message_id),
+            chat_id: Some(chat_id.clone()),
+            inner_event_id: Some("inner-message".to_string()),
+            target_owner_pubkey_hex: Some(chat_id),
+            target_device_id: Some(target_device_id),
+        },
+    ));
 
     assert!(core.pending_relay_publishes.contains_key(&first_event_id));
     assert!(core.pending_relay_publishes.contains_key(&second_event_id));
@@ -2183,19 +2210,13 @@ fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
         )
         .expect("direct send");
 
-    let message_publish_count = result
-        .effects
-        .iter()
-        .filter(|effect| {
-            matches!(
-                effect,
-                ProtocolEffect::Publish(publish)
-                    if publish.inner_event_id.as_deref() == Some(result.message_id.as_str())
-            )
-        })
-        .count();
-    assert_eq!(
-        message_publish_count, 0,
+    let published_peer_targets = result
+        .publish_registrations
+        .values()
+        .filter_map(|registration| registration.target_owner_pubkey_hex.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        !published_peer_targets.contains(&peer_owner.public_key().to_hex()),
         "peer owner must not be considered published before peer protocol state exists"
     );
     let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());

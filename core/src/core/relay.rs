@@ -188,7 +188,10 @@ impl AppCore {
                             self.apply_group_decrypted_event(group_event);
                         }
                         if !group_result.effects.is_empty() {
-                            self.process_protocol_engine_effects(group_result.effects);
+                            self.process_protocol_engine_effects(
+                                group_result.effects,
+                                &group_result.publish_registrations,
+                            );
                         }
                         if should_remember_group_event {
                             self.remember_event(event_id);
@@ -287,7 +290,10 @@ impl AppCore {
                                 )
                             })
                             .unwrap_or_default();
-                        self.process_protocol_engine_effects(effects);
+                        self.process_protocol_engine_effects(
+                            effects,
+                            &ProtocolPublishRegistrations::default(),
+                        );
                         if queued_targets.is_empty() {
                             self.request_protocol_subscription_refresh();
                             self.schedule_protocol_subscription_liveness_check(
@@ -394,18 +400,54 @@ impl AppCore {
         true
     }
 
-    pub(super) fn process_protocol_engine_effects(&mut self, mut effects: Vec<ProtocolEffect>) {
+    pub(super) fn process_protocol_engine_effects(
+        &mut self,
+        mut effects: Vec<ProtocolEffect>,
+        publish_registrations: &ProtocolPublishRegistrations,
+    ) {
         coalesce_protocol_fetch_effects(&mut effects);
+        let mut queued_first_contact_payloads = 0usize;
         for effect in effects {
             match effect {
-                ProtocolEffect::Publish(publish) => {
-                    self.publish_protocol_event(publish);
+                ProtocolEffect::Publish(event) => {
+                    let event_id = event.id.to_string();
+                    let registration = publish_registrations
+                        .get(&event_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    if registration.is_first_contact_payload() {
+                        if self.queue_runtime_event_for_delayed_publish(event, registration) {
+                            queued_first_contact_payloads =
+                                queued_first_contact_payloads.saturating_add(1);
+                        }
+                    } else {
+                        self.publish_runtime_event_with_registration(event, registration);
+                    }
                 }
                 ProtocolEffect::FetchProtocolState { filters, reason } => {
                     self.fetch_protocol_state_for_filters(filters, reason);
                 }
             }
         }
+        if queued_first_contact_payloads > 0 {
+            self.push_debug_log(
+                "appcore.protocol.first_contact_staged",
+                format!("queued_payloads={queued_first_contact_payloads}"),
+            );
+            self.schedule_first_contact_payload_publish();
+        }
+    }
+
+    pub(super) fn schedule_first_contact_payload_publish(&self) {
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            sleep(Duration::from_millis(FIRST_CONTACT_STAGE_DELAY_MS)).await;
+            let _ = tx.send(CoreMsg::Internal(Box::new(
+                InternalEvent::RetryPendingRelayPublishes {
+                    reason: "first_contact_stage".to_string(),
+                },
+            )));
+        });
     }
 
     pub(super) fn ack_pending_decrypted_deliveries_after_app_persist(&mut self) {

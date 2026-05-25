@@ -1,110 +1,144 @@
 fn protocol_effects_from_prepared(
     prepared: &PreparedSend,
     inner_event_id: Option<String>,
-    chat_id: String,
+    message_id: Option<String>,
+    chat_id: Option<String>,
     event_ids: &mut Vec<String>,
+    publish_registrations: &mut ProtocolPublishRegistrations,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
     let mut publishes = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        publishes.push(ProtocolPublish {
+        bootstrap.push(ProtocolPreparedPublish {
+            registration: ProtocolPublishRegistration::protocol(
+                message_id.clone(),
+                chat_id.clone(),
+                inner_event_id.clone(),
+                target_owner_pubkey_hex.clone(),
+                None,
+            ),
             event,
-            chat_id: chat_id.clone(),
-            inner_event_id: None,
         });
     }
     for delivery in &prepared.deliveries {
         let event = message_event_for_delivery(delivery)?;
         event_ids.push(event.id.to_string());
-        let publish = ProtocolPublish {
+        payload.push(ProtocolPreparedPublish {
+            registration: ProtocolPublishRegistration::protocol(
+                message_id.clone(),
+                chat_id.clone(),
+                inner_event_id.clone(),
+                Some(public_owner(delivery.owner_pubkey)?.to_hex()),
+                Some(public_device(delivery.device_pubkey)?.to_hex()),
+            ),
             event,
-            chat_id: chat_id.clone(),
-            inner_event_id: inner_event_id.clone(),
-        };
-        publishes.push(publish);
+        });
     }
-    Ok(publishes.into_iter().map(ProtocolEffect::Publish).collect())
+    Ok(protocol_publish_effects(
+        bootstrap,
+        payload,
+        publish_registrations,
+    ))
 }
 
 fn protocol_effects_from_group_prepared_publish(
     prepared: &GroupPreparedPublish,
     inner_event_id: Option<String>,
-    chat_id: String,
+    message_id: Option<String>,
+    chat_id: Option<String>,
     event_ids: &mut Vec<String>,
+    publish_registrations: &mut ProtocolPublishRegistrations,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
     let mut publishes = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        publishes.push(ProtocolPublish {
+        bootstrap.push(ProtocolPreparedPublish {
+            registration: ProtocolPublishRegistration::protocol(
+                message_id.clone(),
+                chat_id.clone(),
+                inner_event_id.clone(),
+                None,
+                None,
+            ),
             event,
-            chat_id: chat_id.clone(),
-            inner_event_id: None,
         });
     }
     for delivery in &prepared.deliveries {
         let event = message_event_for_delivery(delivery)?;
         event_ids.push(event.id.to_string());
-        let publish = ProtocolPublish {
+        payload.push(ProtocolPreparedPublish {
+            registration: ProtocolPublishRegistration::protocol(
+                message_id.clone(),
+                chat_id.clone(),
+                inner_event_id.clone(),
+                Some(public_owner(delivery.owner_pubkey)?.to_hex()),
+                Some(public_device(delivery.device_pubkey)?.to_hex()),
+            ),
             event,
-            chat_id: chat_id.clone(),
-            inner_event_id: inner_event_id.clone(),
-        };
-        publishes.push(publish);
+        });
     }
     for sender_key_message in &prepared.sender_key_messages {
         let event = group_sender_key_message_event(sender_key_message)?;
         event_ids.push(event.id.to_string());
-        publishes.push(ProtocolPublish {
+        payload.push(ProtocolPreparedPublish {
+            registration: ProtocolPublishRegistration::protocol(None, None, None, None, None),
             event,
-            chat_id: chat_id.clone(),
-            inner_event_id: inner_event_id.clone(),
         });
     }
-    Ok(publishes.into_iter().map(ProtocolEffect::Publish).collect())
+    Ok(protocol_publish_effects(
+        bootstrap,
+        payload,
+        publish_registrations,
+    ))
 }
 
-fn message_event_for_delivery(delivery: &Delivery) -> anyhow::Result<Event> {
-    let envelope = &delivery.envelope;
-    let author_secret_key = nostr::SecretKey::from_slice(&envelope.signer_secret_key)?;
-    let author_keys = Keys::new(author_secret_key);
-    let derived_sender = NdrDevicePubkey::from_bytes(author_keys.public_key().to_bytes());
-    if derived_sender != envelope.sender {
-        anyhow::bail!("sender does not match signer secret");
+fn protocol_publish_effects(
+    bootstrap: Vec<ProtocolPreparedPublish>,
+    payload: Vec<ProtocolPreparedPublish>,
+    publish_registrations: &mut ProtocolPublishRegistrations,
+) -> Vec<ProtocolEffect> {
+    if bootstrap.is_empty() {
+        return payload
+            .into_iter()
+            .map(|publish| {
+                protocol_publish_effect(publish, APPCORE_PROTOCOL_LABEL, publish_registrations)
+            })
+            .collect();
     }
-
-    let recipient = public_device_pubkey(delivery.device_pubkey)?;
-    let recipient_hex = recipient.to_hex();
-    let unsigned = nostr::EventBuilder::new(
-        Kind::from(MESSAGE_EVENT_KIND as u16),
-        envelope.ciphertext.clone(),
-    )
-    .tag(nostr::Tag::parse([
-        "header",
-        envelope.encrypted_header.as_str(),
-    ])?)
-    .tag(nostr::Tag::parse(["p", recipient_hex.as_str()])?)
-    .custom_created_at(Timestamp::from(envelope.created_at.get()))
-    .build(public_device_pubkey(envelope.sender)?);
-
-    Ok(unsigned.sign_with_keys(&author_keys)?)
+    if payload.is_empty() {
+        return bootstrap
+            .into_iter()
+            .map(|publish| {
+                protocol_publish_effect(publish, APPCORE_PROTOCOL_LABEL, publish_registrations)
+            })
+            .collect();
+    }
+    let mut effects = Vec::with_capacity(bootstrap.len() + payload.len());
+    for publish in bootstrap {
+        effects.push(protocol_publish_effect(
+            publish,
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+            publish_registrations,
+        ));
+    }
+    for publish in payload {
+        effects.push(protocol_publish_effect(
+            publish,
+            APPCORE_PROTOCOL_FIRST_CONTACT_LABEL,
+            publish_registrations,
+        ));
+    }
+    effects
 }
 
-fn public_device_pubkey(device_pubkey: NdrDevicePubkey) -> anyhow::Result<PublicKey> {
-    Ok(PublicKey::from_slice(&device_pubkey.to_bytes())?)
-}
-
-fn classify_group_pairwise_payload(payload: &[u8]) -> anyhow::Result<(bool, bool)> {
-    let codec = JsonGroupPayloadCodecV1;
-    let Some(command) = codec.decode_pairwise_command(payload)? else {
-        return Ok((false, false));
-    };
-    let supported = match command {
-        GroupPairwiseCommand::MetadataSnapshot { snapshot } => snapshot.protocol.is_sender_key_v1(),
-        GroupPairwiseCommand::SenderKeyDistribution { .. }
-        | GroupPairwiseCommand::SenderKeyRepairRequest { .. } => true,
-        _ => false,
-    };
-    Ok((true, supported))
+fn protocol_publish_effect(
+    publish: ProtocolPreparedPublish,
+    label: &'static str,
+    publish_registrations: &mut ProtocolPublishRegistrations,
+) -> ProtocolEffect {
+    let event_id = publish.event.id.to_string();
+    publish_registrations.insert(event_id, publish.registration.with_label(label));
+    ProtocolEffect::Publish(publish.event)
 }
 
 fn sort_dedup_protocol_pubkeys(pubkeys: &mut Vec<PublicKey>) {
