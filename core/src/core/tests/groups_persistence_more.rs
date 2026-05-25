@@ -612,38 +612,7 @@ fn protocol_payload_events_for_result<'a>(
 }
 
 fn protocol_effect_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
-    effects
-        .iter()
-        .flat_map(|effect| match effect {
-            ProtocolEffect::PublishSigned(event) => vec![event],
-            ProtocolEffect::PublishSignedForInnerEvent { event, .. } => vec![event],
-            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => bootstrap
-                .iter()
-                .chain(payload)
-                .map(|publish| &publish.event)
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        })
-        .collect()
-}
-
-fn protocol_targeted_payload_count(effects: &[ProtocolEffect], owner_pubkey_hex: &str) -> usize {
-    effects
-        .iter()
-        .map(|effect| match effect {
-            ProtocolEffect::PublishSignedForInnerEvent {
-                target_owner_pubkey_hex,
-                ..
-            } if target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex) => 1,
-            ProtocolEffect::PublishStagedFirstContact { payload, .. } => payload
-                .iter()
-                .filter(|publish| {
-                    publish.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
-                })
-                .count(),
-            _ => 0,
-        })
-        .sum()
+    protocol_publish_events(effects)
 }
 
 fn latest_sender_key_distribution_for_test(

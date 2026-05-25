@@ -75,18 +75,9 @@ fn observe_local_invite_for_test(
 }
 
 fn ordered_protocol_events(effects: &[ProtocolEffect]) -> Vec<Event> {
-    effects
-        .iter()
-        .flat_map(|effect| match effect {
-            ProtocolEffect::PublishSigned(event) => vec![event.clone()],
-            ProtocolEffect::PublishSignedForInnerEvent { event, .. } => vec![event.clone()],
-            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => bootstrap
-                .iter()
-                .chain(payload)
-                .map(|publish| publish.event.clone())
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        })
+    protocol_publish_events(effects)
+        .into_iter()
+        .cloned()
         .collect()
 }
 
@@ -1181,7 +1172,7 @@ fn appcore_sender_key_group_create_prepares_pairwise_metadata_and_distribution()
         "sender-key group creation must not publish a group outer message before app payloads"
     );
     assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &peer_owner.public_key().to_hex()),
+        protocol_targeted_payload_count(&result.publish_registrations, &peer_owner.public_key().to_hex()),
         2,
         "the peer should receive both metadata and sender-key distribution control messages"
     );
@@ -1220,7 +1211,7 @@ fn appcore_sender_key_add_member_sends_current_distribution_pairwise() {
         "add-member control traffic should remain pairwise"
     );
     assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &peer_owner.public_key().to_hex()),
+        protocol_targeted_payload_count(&result.publish_registrations, &peer_owner.public_key().to_hex()),
         2
     );
 }
@@ -1265,12 +1256,12 @@ fn appcore_sender_key_remove_member_rotates_key_only_to_remaining_members() {
         "remove-member control traffic should remain pairwise"
     );
     assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &bob_owner.public_key().to_hex()),
+        protocol_targeted_payload_count(&result.publish_registrations, &bob_owner.public_key().to_hex()),
         2,
         "remaining member should receive metadata and rotated sender key"
     );
     assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &carol_owner.public_key().to_hex()),
+        protocol_targeted_payload_count(&result.publish_registrations, &carol_owner.public_key().to_hex()),
         1,
         "removed member should receive metadata but not the rotated sender key"
     );
@@ -1328,7 +1319,7 @@ fn appcore_existing_pairwise_group_still_uses_pairwise_fanout() {
     assert!(parse_message_event(payload_events[0]).is_ok());
     assert!(parse_group_sender_key_message_event(payload_events[0]).is_err());
     assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &peer_owner.public_key().to_hex()),
+        protocol_targeted_payload_count(&result.publish_registrations, &peer_owner.public_key().to_hex()),
         1
     );
 }

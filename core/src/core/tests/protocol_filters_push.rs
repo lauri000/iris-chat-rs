@@ -251,12 +251,11 @@ fn queued_group_retry_without_protocol_progress_reschedules_fast_tick() {
         .retry_pending_protocol(NdrUnixSeconds(retry_at))
         .expect("retry pending protocol");
     assert!(
-        !batch.group_result.effects.iter().any(|effect| matches!(
-            effect,
-            ProtocolEffect::PublishSigned(_)
-                | ProtocolEffect::PublishSignedForInnerEvent { .. }
-                | ProtocolEffect::PublishStagedFirstContact { .. }
-        )),
+        !batch
+            .group_result
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, ProtocolEffect::Publish(_))),
         "missing member protocol state should not produce group publishes yet"
     );
     assert!(
@@ -330,39 +329,43 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
             .contains(&peer_laptop.public_key().to_hex()),
         "missing peer laptop should remain queued"
     );
-    let staged = result
-        .effects
-        .iter()
-        .find_map(|effect| match effect {
-            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => {
-                Some((bootstrap, payload))
-            }
-            _ => None,
-        })
-        .expect("first contact should stage bootstrap before payload");
+    let bootstrap_events = protocol_publish_events_for_label(
+        &result.effects,
+        &result.publish_registrations,
+        APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+    );
+    let bootstrap_registrations = result
+        .publish_registrations
+        .values()
+        .filter(|registration| registration.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL)
+        .collect::<Vec<_>>();
+    let payload_registrations = result
+        .publish_registrations
+        .values()
+        .filter(|registration| registration.label == APPCORE_PROTOCOL_FIRST_CONTACT_LABEL)
+        .collect::<Vec<_>>();
     assert!(
-        staged
-            .0
+        bootstrap_events
             .iter()
-            .any(|publish| publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
+            .any(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
         "bootstrap phase should contain the invite response"
     );
     assert_eq!(
-        staged.0[0].inner_event_id.as_deref(),
+        bootstrap_registrations[0].inner_event_id.as_deref(),
         Some(result.message_id.as_str()),
         "bootstrap publish must be tied to the app message so payload can wait on it"
     );
     assert_eq!(
-        staged.0[0].target_owner_pubkey_hex.as_deref(),
+        bootstrap_registrations[0].target_owner_pubkey_hex.as_deref(),
         Some(peer_owner.public_key().to_hex().as_str())
     );
     assert_eq!(
-        staged.1.len(),
+        payload_registrations.len(),
         1,
         "payload phase should contain the ready phone delivery"
     );
     assert_eq!(
-        staged.1[0].target_owner_pubkey_hex.as_deref(),
+        payload_registrations[0].target_owner_pubkey_hex.as_deref(),
         Some(peer_owner.public_key().to_hex().as_str())
     );
 
@@ -459,11 +462,13 @@ fn appcore_ownerless_invite_uses_known_roster_owner_for_first_contact() {
         result.queued_targets
     );
     assert!(
-        result.effects.iter().any(|effect| matches!(
-            effect,
-            ProtocolEffect::PublishStagedFirstContact { bootstrap, .. }
-                if bootstrap.iter().any(|publish| publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND)
-        )),
+        protocol_publish_events_for_label(
+            &result.effects,
+            &result.publish_registrations,
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+        )
+        .iter()
+        .any(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
         "first contact should publish an invite response for ownerless peer invites"
     );
 }
@@ -655,25 +660,12 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
         )
         .expect("direct send");
 
-    let local_sibling_events = result
-        .effects
-        .iter()
-        .filter_map(|effect| match effect {
-            ProtocolEffect::PublishSignedForInnerEvent {
-                event,
-                target_owner_pubkey_hex,
-                target_device_id,
-                ..
-            } if target_owner_pubkey_hex.as_deref()
-                == Some(owner.public_key().to_hex().as_str())
-                && target_device_id.as_deref()
-                    == Some(linked_device.public_key().to_hex().as_str()) =>
-            {
-                Some(event)
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let local_sibling_events = protocol_publish_events_for_target(
+        &result.effects,
+        &result.publish_registrations,
+        &owner.public_key().to_hex(),
+        &linked_device.public_key().to_hex(),
+    );
 
     assert_eq!(
         local_sibling_events.len(),
@@ -690,13 +682,9 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
             .collect::<Vec<_>>()
     );
     assert!(
-        !result.effects.iter().any(|effect| {
-            matches!(
-                effect,
-                ProtocolEffect::PublishSigned(event)
-                    if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND
-            )
-        }),
+        !protocol_publish_events(&result.effects)
+            .iter()
+            .any(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
         "ordinary direct sender-copy fanout must not refresh the linked-device bootstrap session"
     );
 }
@@ -809,37 +797,17 @@ fn remote_group_metadata_syncs_to_local_sibling() {
 
     let target_owner_hex = owner.public_key().to_hex();
     let target_device_hex = linked_device.public_key().to_hex();
-    let mut bootstrap_events = Vec::new();
-    let mut sibling_payload_events = Vec::new();
-    for effect in &outcome.effects {
-        match effect {
-            ProtocolEffect::PublishSignedForInnerEvent {
-                event,
-                target_owner_pubkey_hex,
-                target_device_id,
-                ..
-            } if target_owner_pubkey_hex.as_deref() == Some(target_owner_hex.as_str())
-                && target_device_id.as_deref() == Some(target_device_hex.as_str()) =>
-            {
-                sibling_payload_events.push(event.clone());
-            }
-            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => {
-                bootstrap_events.extend(bootstrap.iter().map(|publish| publish.event.clone()));
-                sibling_payload_events.extend(
-                    payload
-                        .iter()
-                        .filter(|publish| {
-                            publish.target_owner_pubkey_hex.as_deref()
-                                == Some(target_owner_hex.as_str())
-                                && publish.target_device_id.as_deref()
-                                    == Some(target_device_hex.as_str())
-                        })
-                        .map(|publish| publish.event.clone()),
-                );
-            }
-            _ => {}
-        }
-    }
+    let bootstrap_events = protocol_publish_events_for_label(
+        &outcome.effects,
+        &outcome.publish_registrations,
+        APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+    );
+    let sibling_payload_events = protocol_publish_events_for_target(
+        &outcome.effects,
+        &outcome.publish_registrations,
+        &target_owner_hex,
+        &target_device_hex,
+    );
     assert!(
         !sibling_payload_events.is_empty(),
         "remote group metadata should be republished to linked local devices"
@@ -985,24 +953,19 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
 
     let target_owner_hex = owner.public_key().to_hex();
     let target_device_hex = primary_device.public_key().to_hex();
-    let metadata_bootstrap_events = linked_metadata_result
-        .effects
-        .iter()
-        .flat_map(|effect| match effect {
-            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload }
-                if payload.iter().any(|publish| {
-                    publish.target_owner_pubkey_hex.as_deref() == Some(target_owner_hex.as_str())
-                        && publish.target_device_id.as_deref() == Some(target_device_hex.as_str())
-                }) =>
-            {
-                bootstrap
-                    .iter()
-                    .map(|publish| publish.event.clone())
-                    .collect::<Vec<_>>()
-            }
-            _ => Vec::new(),
-        })
-        .collect::<Vec<_>>();
+    let metadata_bootstrap_events = if protocol_has_publish_target(
+        &linked_metadata_result.publish_registrations,
+        &target_owner_hex,
+        &target_device_hex,
+    ) {
+        protocol_publish_events_for_label(
+            &linked_metadata_result.effects,
+            &linked_metadata_result.publish_registrations,
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+        )
+    } else {
+        Vec::new()
+    };
     for event in &metadata_bootstrap_events {
         primary
             .observe_invite_response_event(event)
@@ -1022,49 +985,25 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
             Some("linked-group-inner".to_string()),
         )
         .expect("linked group send");
-    let local_sibling_events = result
-        .effects
-        .iter()
-        .flat_map(|effect| match effect {
-            ProtocolEffect::PublishSignedForInnerEvent {
-                event,
-                target_owner_pubkey_hex,
-                target_device_id,
-                ..
-            } if target_owner_pubkey_hex.as_deref() == Some(target_owner_hex.as_str())
-                && target_device_id.as_deref() == Some(target_device_hex.as_str()) =>
-            {
-                vec![event.clone()]
-            }
-            ProtocolEffect::PublishStagedFirstContact { payload, .. } => payload
-                .iter()
-                .filter(|publish| {
-                    publish.target_owner_pubkey_hex.as_deref() == Some(target_owner_hex.as_str())
-                        && publish.target_device_id.as_deref() == Some(target_device_hex.as_str())
-                })
-                .map(|publish| publish.event.clone())
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        })
-        .collect::<Vec<_>>();
-    let local_sibling_bootstrap_events = result
-        .effects
-        .iter()
-        .flat_map(|effect| match effect {
-            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload }
-                if payload.iter().any(|publish| {
-                    publish.target_owner_pubkey_hex.as_deref() == Some(target_owner_hex.as_str())
-                        && publish.target_device_id.as_deref() == Some(target_device_hex.as_str())
-                }) =>
-            {
-                bootstrap
-                    .iter()
-                    .map(|publish| publish.event.clone())
-                    .collect::<Vec<_>>()
-            }
-            _ => Vec::new(),
-        })
-        .collect::<Vec<_>>();
+    let local_sibling_events = protocol_publish_events_for_target(
+        &result.effects,
+        &result.publish_registrations,
+        &target_owner_hex,
+        &target_device_hex,
+    );
+    let local_sibling_bootstrap_events = if protocol_has_publish_target(
+        &result.publish_registrations,
+        &target_owner_hex,
+        &target_device_hex,
+    ) {
+        protocol_publish_events_for_label(
+            &result.effects,
+            &result.publish_registrations,
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+        )
+    } else {
+        Vec::new()
+    };
 
     assert!(
         !local_sibling_events.is_empty(),
@@ -1173,8 +1112,6 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
     );
     core.handle_relay_publish_finished(
         local_event_id,
-        Some(message_id.clone()),
-        Some(chat_id.clone()),
         true,
         vec!["wss://relay.example".to_string()],
         "local sibling ack".to_string(),
@@ -1247,8 +1184,6 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
     );
     core.handle_relay_publish_finished(
         peer_event_id,
-        Some(message_id.clone()),
-        Some(chat_id.clone()),
         true,
         vec!["wss://relay.example".to_string()],
         "peer ack".to_string(),
@@ -1351,8 +1286,6 @@ fn first_contact_payload_waits_for_bootstrap_publish_success() {
 
     core.handle_relay_publish_finished(
         bootstrap_event_id,
-        Some(message_id.clone()),
-        Some(chat_id.clone()),
         true,
         vec!["wss://relay.example".to_string()],
         "bootstrap ack".to_string(),
@@ -1387,8 +1320,6 @@ fn first_contact_payload_waits_for_bootstrap_publish_success() {
 
     core.handle_relay_publish_finished(
         payload_event_id,
-        Some(message_id.clone()),
-        Some(chat_id.clone()),
         true,
         vec!["wss://relay.example".to_string()],
         "payload ack".to_string(),

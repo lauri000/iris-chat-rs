@@ -127,26 +127,30 @@ impl ProtocolEngine {
         match result {
             Ok(Some(event)) => {
                 if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
-                    let (effects, queued_targets) = self.sender_key_repair_response_effects(
-                        repair.requester_owner,
-                        &repair.request,
-                        NdrUnixSeconds(unix_now().get()),
-                    )?;
+                    let (effects, publish_registrations, queued_targets) =
+                        self.sender_key_repair_response_effects(
+                            repair.requester_owner,
+                            &repair.request,
+                            NdrUnixSeconds(unix_now().get()),
+                        )?;
                     self.persist()?;
                     return Ok(ProtocolGroupIncomingResult {
                         effects,
+                        publish_registrations,
                         queued_targets,
                         consumed: true,
                         ..Default::default()
                     });
                 }
                 let mut effects = Vec::new();
+                let mut publish_registrations = ProtocolPublishRegistrations::default();
                 let mut queued_targets = Vec::new();
                 if sender_owner != self.local_owner {
                     if let GroupIncomingEvent::MetadataUpdated(group) = &event {
-                        let (sync_effects, sync_targets) =
+                        let (sync_effects, sync_registrations, sync_targets) =
                             self.sync_group_to_local_siblings(group)?;
                         effects.extend(sync_effects);
+                        publish_registrations.extend(sync_registrations);
                         queued_targets.extend(sync_targets);
                     }
                 }
@@ -154,10 +158,12 @@ impl ProtocolEngine {
                 let retry = self.retry_pending_group_inputs(NdrUnixSeconds(unix_now().get()))?;
                 events.extend(retry.events);
                 effects.extend(retry.effects);
+                publish_registrations.extend(retry.publish_registrations);
                 queued_targets.extend(retry.queued_targets);
                 let fanout_retry =
                     self.retry_pending_group_fanouts(NdrUnixSeconds(unix_now().get()))?;
                 effects.extend(fanout_retry.effects);
+                publish_registrations.extend(fanout_retry.publish_registrations);
                 queued_targets.extend(fanout_retry.queued_targets);
                 queued_targets.extend(self.queued_group_targets());
                 queued_targets.sort();
@@ -166,6 +172,7 @@ impl ProtocolEngine {
                 Ok(ProtocolGroupIncomingResult {
                     events,
                     effects,
+                    publish_registrations,
                     queued_targets,
                     consumed: true,
                     ..Default::default()
@@ -265,6 +272,7 @@ impl ProtocolEngine {
                         chat_id: pending.chat_id.clone(),
                         event_ids: Vec::new(),
                         effects,
+                        publish_registrations: ProtocolPublishRegistrations::default(),
                         queued_targets,
                     });
                 }
@@ -278,6 +286,7 @@ impl ProtocolEngine {
             let mut ctx = ProtocolContext::new(now, &mut rng);
             let mut event_ids = Vec::new();
             let mut effects = Vec::new();
+            let mut publish_registrations = ProtocolPublishRegistrations::default();
             let mut gaps = Vec::new();
 
             if !remote_targets.is_empty() {
@@ -297,7 +306,10 @@ impl ProtocolEngine {
                 effects.extend(protocol_effects_from_prepared(
                     &remote,
                     pending.inner_event_id.clone(),
+                    Some(pending.message_id.clone()),
+                    Some(pending.chat_id.clone()),
                     &mut event_ids,
+                    &mut publish_registrations,
                 )?);
             }
 
@@ -318,7 +330,10 @@ impl ProtocolEngine {
                     effects.extend(protocol_effects_from_prepared(
                         &local,
                         pending.inner_event_id.clone(),
+                        Some(pending.message_id.clone()),
+                        Some(pending.chat_id.clone()),
                         &mut event_ids,
+                        &mut publish_registrations,
                     )?);
                 }
             }
@@ -346,6 +361,7 @@ impl ProtocolEngine {
                     chat_id: pending.chat_id.clone(),
                     event_ids,
                     effects,
+                    publish_registrations,
                     queued_targets,
                 });
             }
@@ -372,6 +388,9 @@ impl ProtocolEngine {
         let mut group_result = group_result;
         group_result.effects.extend(group_fanout_result.effects);
         group_result
+            .publish_registrations
+            .extend(group_fanout_result.publish_registrations);
+        group_result
             .queued_targets
             .extend(group_fanout_result.queued_targets);
         group_result.queued_targets.sort();
@@ -394,6 +413,7 @@ impl ProtocolEngine {
             group_result,
             direct_messages,
             effects: Vec::new(),
+            publish_registrations: ProtocolPublishRegistrations::default(),
         };
         if !batch.is_empty() {
             self.last_backfill_attempt_secs = now.get();
@@ -539,12 +559,14 @@ impl ProtocolEngine {
             match outcome {
                 Ok(Some(event)) => {
                     if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
-                        let (effects, queued_targets) = self.sender_key_repair_response_effects(
-                            repair.requester_owner,
-                            &repair.request,
-                            now,
-                        )?;
+                        let (effects, publish_registrations, queued_targets) =
+                            self.sender_key_repair_response_effects(
+                                repair.requester_owner,
+                                &repair.request,
+                                now,
+                            )?;
                         result.effects.extend(effects);
+                        result.publish_registrations.extend(publish_registrations);
                         result.queued_targets.extend(queued_targets);
                     } else {
                         result.events.push(event);
@@ -580,11 +602,16 @@ impl ProtocolEngine {
             }
             result.events.extend(outcome.events);
             result.effects.extend(outcome.effects);
+            result
+                .publish_registrations
+                .extend(outcome.publish_registrations);
         }
         self.pending_group_sender_key_messages = still_sender_keys;
-        let repair_effects = self.retry_pending_group_sender_key_repairs(now)?;
+        let (repair_effects, repair_registrations) =
+            self.retry_pending_group_sender_key_repairs(now)?;
         if !repair_effects.is_empty() {
             result.effects.extend(repair_effects);
+            result.publish_registrations.extend(repair_registrations);
             persist_needed = true;
         }
         if persist_needed || !result.events.is_empty() || !result.effects.is_empty() {
@@ -603,6 +630,7 @@ impl ProtocolEngine {
         let pending = std::mem::take(&mut self.pending_group_fanouts);
         let mut still_pending = Vec::new();
         let mut effects = Vec::new();
+        let mut publish_registrations = ProtocolPublishRegistrations::default();
         let mut queued_targets = Vec::new();
         let mut persist_needed = false;
         let mut session_changed = false;
@@ -657,10 +685,15 @@ impl ProtocolEngine {
             };
             let still_has_gap = !prepared.relay_gaps.is_empty();
             let mut event_ids = Vec::new();
+            let message_id = pending.inner_event_id.clone();
+            let chat_id = message_id.as_ref().map(|_| group_chat_id(&pending.group_id));
             effects.extend(protocol_effects_from_group_prepared_publish(
                 &prepared,
                 pending.inner_event_id.clone(),
+                message_id,
+                chat_id,
                 &mut event_ids,
+                &mut publish_registrations,
             )?);
             if still_has_gap {
                 pending.next_retry_at_secs =
@@ -680,6 +713,7 @@ impl ProtocolEngine {
         }
         Ok(ProtocolGroupIncomingResult {
             effects,
+            publish_registrations,
             queued_targets,
             ..Default::default()
         })

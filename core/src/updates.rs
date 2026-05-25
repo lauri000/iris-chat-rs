@@ -156,8 +156,6 @@ pub(crate) enum InternalEvent {
 #[derive(Debug)]
 pub(crate) struct RelayPublishDrainResult {
     pub(crate) event_id: String,
-    pub(crate) message_id: Option<String>,
-    pub(crate) chat_id: Option<String>,
     pub(crate) success: bool,
     pub(crate) relay_urls: Vec<String>,
     pub(crate) detail: String,

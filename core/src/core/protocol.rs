@@ -112,10 +112,7 @@ impl AppCore {
                         result.queued_targets.len()
                     ),
                 );
-                self.process_protocol_engine_effects_with_completions(
-                    result.effects,
-                    &BTreeMap::new(),
-                );
+                self.process_protocol_engine_effects(result.effects, &result.publish_registrations);
                 if !result.queued_targets.is_empty() {
                     self.handle_queued_protocol_targets(reason, &result.queued_targets);
                 }
@@ -142,37 +139,26 @@ impl AppCore {
         let mut published = 0usize;
         let mut queued_targets = Vec::new();
         let mut direct_effects = Vec::new();
-        let mut direct_completions = BTreeMap::new();
+        let mut direct_registrations = ProtocolPublishRegistrations::default();
         for result in batch.direct_results {
             published = published.saturating_add(result.event_ids.len());
             queued_targets.extend(result.queued_targets.clone());
-            direct_completions.extend(
-                result
-                    .event_ids
-                    .iter()
-                    .map(|event_id| {
-                        (
-                            event_id.clone(),
-                            (result.message_id.clone(), result.chat_id.clone()),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>(),
-            );
             direct_effects.extend(result.effects);
+            direct_registrations.extend(result.publish_registrations);
             self.sync_message_delivery_trace(&result.chat_id, &result.message_id);
             self.reconcile_outgoing_message_delivery(&result.chat_id, &result.message_id);
         }
         queued_targets.extend(batch.group_result.queued_targets.clone());
         normalize_protocol_queued_targets(&mut queued_targets);
-        self.process_protocol_engine_effects_with_completions(direct_effects, &direct_completions);
+        self.process_protocol_engine_effects(direct_effects, &direct_registrations);
         for group_event in batch.group_result.events {
             self.apply_group_decrypted_event(group_event);
         }
-        self.process_protocol_engine_effects_with_completions(
+        self.process_protocol_engine_effects(
             batch.group_result.effects,
-            &BTreeMap::new(),
+            &batch.group_result.publish_registrations,
         );
-        self.process_protocol_engine_effects_with_completions(batch.effects, &BTreeMap::new());
+        self.process_protocol_engine_effects(batch.effects, &batch.publish_registrations);
         for decrypted in batch.direct_messages {
             let event_id = decrypted.event_id.clone();
             self.apply_decrypted_runtime_message_with_metadata(
@@ -256,10 +242,17 @@ impl AppCore {
             .append(&mut source.group_result.effects);
         target
             .group_result
+            .publish_registrations
+            .extend(source.group_result.publish_registrations);
+        target
+            .group_result
             .queued_targets
             .append(&mut source.group_result.queued_targets);
         target.direct_messages.append(&mut source.direct_messages);
         target.effects.append(&mut source.effects);
+        target
+            .publish_registrations
+            .extend(source.publish_registrations);
     }
 
     pub(super) fn remember_recent_handshake_peer(

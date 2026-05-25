@@ -1,101 +1,147 @@
 fn protocol_effects_from_prepared(
     prepared: &PreparedSend,
     inner_event_id: Option<String>,
+    message_id: Option<String>,
+    chat_id: Option<String>,
     event_ids: &mut Vec<String>,
+    publish_registrations: &mut ProtocolPublishRegistrations,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
     let mut bootstrap = Vec::new();
     let mut payload = Vec::new();
     let target_owner_pubkey_hex = Some(public_owner(prepared.recipient_owner)?.to_hex());
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        bootstrap.push(ProtocolPublishEvent {
+        bootstrap.push(ProtocolPreparedPublish {
+            registration: ProtocolPublishRegistration::protocol(
+                message_id.clone(),
+                chat_id.clone(),
+                inner_event_id.clone(),
+                target_owner_pubkey_hex.clone(),
+                None,
+            ),
             event,
-            inner_event_id: inner_event_id.clone(),
-            target_owner_pubkey_hex: target_owner_pubkey_hex.clone(),
-            target_device_id: None,
         });
     }
     for delivery in &prepared.deliveries {
         let event = message_event(&delivery.envelope)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPublishEvent {
+        payload.push(ProtocolPreparedPublish {
+            registration: ProtocolPublishRegistration::protocol(
+                message_id.clone(),
+                chat_id.clone(),
+                inner_event_id.clone(),
+                Some(public_owner(delivery.owner_pubkey)?.to_hex()),
+                Some(public_device(delivery.device_pubkey)?.to_hex()),
+            ),
             event,
-            inner_event_id: inner_event_id.clone(),
-            target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
-            target_device_id: Some(public_device(delivery.device_pubkey)?.to_hex()),
         });
     }
-    Ok(protocol_publish_effects(bootstrap, payload))
+    Ok(protocol_publish_effects(
+        bootstrap,
+        payload,
+        publish_registrations,
+    ))
 }
 
 fn protocol_effects_from_group_prepared_publish(
     prepared: &GroupPreparedPublish,
     inner_event_id: Option<String>,
+    message_id: Option<String>,
+    chat_id: Option<String>,
     event_ids: &mut Vec<String>,
+    publish_registrations: &mut ProtocolPublishRegistrations,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
     let mut bootstrap = Vec::new();
     let mut payload = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        bootstrap.push(ProtocolPublishEvent {
+        bootstrap.push(ProtocolPreparedPublish {
+            registration: ProtocolPublishRegistration::protocol(
+                message_id.clone(),
+                chat_id.clone(),
+                inner_event_id.clone(),
+                None,
+                None,
+            ),
             event,
-            inner_event_id: inner_event_id.clone(),
-            target_owner_pubkey_hex: None,
-            target_device_id: None,
         });
     }
     for delivery in &prepared.deliveries {
         let event = message_event(&delivery.envelope)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPublishEvent {
+        payload.push(ProtocolPreparedPublish {
+            registration: ProtocolPublishRegistration::protocol(
+                message_id.clone(),
+                chat_id.clone(),
+                inner_event_id.clone(),
+                Some(public_owner(delivery.owner_pubkey)?.to_hex()),
+                Some(public_device(delivery.device_pubkey)?.to_hex()),
+            ),
             event,
-            inner_event_id: inner_event_id.clone(),
-            target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
-            target_device_id: Some(public_device(delivery.device_pubkey)?.to_hex()),
         });
     }
     for sender_key_message in &prepared.sender_key_messages {
         let event = group_sender_key_message_event(sender_key_message)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPublishEvent {
+        payload.push(ProtocolPreparedPublish {
+            registration: ProtocolPublishRegistration::protocol(None, None, None, None, None),
             event,
-            inner_event_id: None,
-            target_owner_pubkey_hex: None,
-            target_device_id: None,
         });
     }
-    Ok(protocol_publish_effects(bootstrap, payload))
+    Ok(protocol_publish_effects(
+        bootstrap,
+        payload,
+        publish_registrations,
+    ))
 }
 
 fn protocol_publish_effects(
-    bootstrap: Vec<ProtocolPublishEvent>,
-    payload: Vec<ProtocolPublishEvent>,
+    bootstrap: Vec<ProtocolPreparedPublish>,
+    payload: Vec<ProtocolPreparedPublish>,
+    publish_registrations: &mut ProtocolPublishRegistrations,
 ) -> Vec<ProtocolEffect> {
     if bootstrap.is_empty() {
-        return payload.into_iter().map(protocol_publish_effect).collect();
+        return payload
+            .into_iter()
+            .map(|publish| {
+                protocol_publish_effect(publish, APPCORE_PROTOCOL_LABEL, publish_registrations)
+            })
+            .collect();
     }
     if payload.is_empty() {
-        return bootstrap.into_iter().map(protocol_publish_effect).collect();
+        return bootstrap
+            .into_iter()
+            .map(|publish| {
+                protocol_publish_effect(publish, APPCORE_PROTOCOL_LABEL, publish_registrations)
+            })
+            .collect();
     }
-    vec![ProtocolEffect::PublishStagedFirstContact { bootstrap, payload }]
+    let mut effects = Vec::with_capacity(bootstrap.len() + payload.len());
+    for publish in bootstrap {
+        effects.push(protocol_publish_effect(
+            publish,
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+            publish_registrations,
+        ));
+    }
+    for publish in payload {
+        effects.push(protocol_publish_effect(
+            publish,
+            APPCORE_PROTOCOL_FIRST_CONTACT_LABEL,
+            publish_registrations,
+        ));
+    }
+    effects
 }
 
-fn protocol_publish_effect(publish: ProtocolPublishEvent) -> ProtocolEffect {
-    match (
-        publish.inner_event_id,
-        publish.target_owner_pubkey_hex,
-        publish.target_device_id,
-    ) {
-        (None, None, None) => ProtocolEffect::PublishSigned(publish.event),
-        (inner_event_id, target_owner_pubkey_hex, target_device_id) => {
-            ProtocolEffect::PublishSignedForInnerEvent {
-                event: publish.event,
-                inner_event_id,
-                target_owner_pubkey_hex,
-                target_device_id,
-            }
-        }
-    }
+fn protocol_publish_effect(
+    publish: ProtocolPreparedPublish,
+    label: &'static str,
+    publish_registrations: &mut ProtocolPublishRegistrations,
+) -> ProtocolEffect {
+    let event_id = publish.event.id.to_string();
+    publish_registrations.insert(event_id, publish.registration.with_label(label));
+    ProtocolEffect::Publish(publish.event)
 }
 
 fn sort_dedup_protocol_pubkeys(pubkeys: &mut Vec<PublicKey>) {

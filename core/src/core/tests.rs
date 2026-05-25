@@ -39,6 +39,84 @@ fn seed_protocol_storage_if_missing_for_test(
     Ok(())
 }
 
+fn protocol_publish_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::Publish(event) => Some(event),
+            _ => None,
+        })
+        .collect()
+}
+
+fn protocol_publish_events_for_label(
+    effects: &[ProtocolEffect],
+    registrations: &ProtocolPublishRegistrations,
+    label: &str,
+) -> Vec<Event> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::Publish(event)
+                if registrations
+                    .get(&event.id.to_string())
+                    .is_some_and(|registration| registration.label == label) =>
+            {
+                Some(event.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn protocol_publish_events_for_target(
+    effects: &[ProtocolEffect],
+    registrations: &ProtocolPublishRegistrations,
+    owner_pubkey_hex: &str,
+    device_id: &str,
+) -> Vec<Event> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::Publish(event)
+                if registrations
+                    .get(&event.id.to_string())
+                    .is_some_and(|registration| {
+                        registration.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
+                            && registration.target_device_id.as_deref() == Some(device_id)
+                    }) =>
+            {
+                Some(event.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn protocol_has_publish_target(
+    registrations: &ProtocolPublishRegistrations,
+    owner_pubkey_hex: &str,
+    device_id: &str,
+) -> bool {
+    registrations.values().any(|registration| {
+        registration.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
+            && registration.target_device_id.as_deref() == Some(device_id)
+    })
+}
+
+fn protocol_targeted_payload_count(
+    registrations: &ProtocolPublishRegistrations,
+    owner_pubkey_hex: &str,
+) -> usize {
+    registrations
+        .values()
+        .filter(|registration| {
+            registration.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
+                && registration.label != APPCORE_PROTOCOL_BOOTSTRAP_LABEL
+        })
+        .count()
+}
+
 include!("tests/protocol_runtime.rs");
 include!("tests/protocol_runtime_replay.rs");
 include!("tests/protocol_filters_push.rs");

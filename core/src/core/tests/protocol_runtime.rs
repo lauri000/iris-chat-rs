@@ -580,25 +580,36 @@ fn staged_first_contact_queues_payload_durably_before_delayed_publish() {
     let payload = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
         .sign_with_keys(&device)
         .expect("payload event");
+    let bootstrap_id = bootstrap.id.to_string();
     let payload_id = payload.id.to_string();
-    let completions = BTreeMap::from([(payload_id.clone(), (message_id.clone(), chat_id.clone()))]);
-
-    core.process_protocol_engine_effects_with_completions(
-        vec![ProtocolEffect::PublishStagedFirstContact {
-            bootstrap: vec![ProtocolPublishEvent {
-                event: bootstrap,
-                inner_event_id: None,
-                target_owner_pubkey_hex: None,
+    let registrations = BTreeMap::from([
+        (
+            bootstrap_id,
+            ProtocolPublishRegistration {
+                label: APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+                message_id: Some(message_id.clone()),
+                chat_id: Some(chat_id.clone()),
+                inner_event_id: Some(message_id.clone()),
+                target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
                 target_device_id: None,
-            }],
-            payload: vec![ProtocolPublishEvent {
-                event: payload,
+            },
+        ),
+        (
+            payload_id.clone(),
+            ProtocolPublishRegistration {
+                label: APPCORE_PROTOCOL_FIRST_CONTACT_LABEL,
+                message_id: Some(message_id.clone()),
+                chat_id: Some(chat_id.clone()),
                 inner_event_id: Some(message_id.clone()),
                 target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
                 target_device_id: Some(peer.public_key().to_hex()),
-            }],
-        }],
-        &completions,
+            },
+        ),
+    ]);
+
+    core.process_protocol_engine_effects(
+        vec![ProtocolEffect::Publish(bootstrap), ProtocolEffect::Publish(payload)],
+        &registrations,
     );
 
     let pending = core
@@ -754,8 +765,6 @@ fn failed_publish_drain_batches_results_and_schedules_one_retry() {
         );
         results.push(RelayPublishDrainResult {
             event_id,
-            message_id: None,
-            chat_id: None,
             success: false,
             relay_urls: Vec::new(),
             detail: "publish failed".to_string(),
@@ -1080,21 +1089,27 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
         .expect("second event");
     let second_event_id = second.id.to_string();
 
-    assert!(core.publish_runtime_event_with_metadata(
+    assert!(core.publish_runtime_event_with_registration(
         first,
-        APPCORE_PROTOCOL_LABEL,
-        Some((message_id.clone(), chat_id.clone())),
-        Some("inner-message".to_string()),
-        Some(chat_id.clone()),
-        Some(target_device_id.clone()),
+        ProtocolPublishRegistration {
+            label: APPCORE_PROTOCOL_LABEL,
+            message_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            inner_event_id: Some("inner-message".to_string()),
+            target_owner_pubkey_hex: Some(chat_id.clone()),
+            target_device_id: Some(target_device_id.clone()),
+        },
     ));
-    assert!(core.publish_runtime_event_with_metadata(
+    assert!(core.publish_runtime_event_with_registration(
         second,
-        APPCORE_PROTOCOL_LABEL,
-        Some((message_id, chat_id.clone())),
-        Some("inner-message".to_string()),
-        Some(chat_id),
-        Some(target_device_id),
+        ProtocolPublishRegistration {
+            label: APPCORE_PROTOCOL_LABEL,
+            message_id: Some(message_id),
+            chat_id: Some(chat_id.clone()),
+            inner_event_id: Some("inner-message".to_string()),
+            target_owner_pubkey_hex: Some(chat_id),
+            target_device_id: Some(target_device_id),
+        },
     ));
 
     assert!(core.pending_relay_publishes.contains_key(&first_event_id));
@@ -2190,15 +2205,9 @@ fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
         .expect("direct send");
 
     let published_peer_targets = result
-        .effects
-        .iter()
-        .filter_map(|effect| match effect {
-            ProtocolEffect::PublishSignedForInnerEvent {
-                target_owner_pubkey_hex,
-                ..
-            } => target_owner_pubkey_hex.clone(),
-            _ => None,
-        })
+        .publish_registrations
+        .values()
+        .filter_map(|registration| registration.target_owner_pubkey_hex.clone())
         .collect::<Vec<_>>();
     assert!(
         !published_peer_targets.contains(&peer_owner.public_key().to_hex()),

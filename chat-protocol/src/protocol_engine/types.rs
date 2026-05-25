@@ -36,28 +36,61 @@ struct ProtocolEnginePersistedState {
     last_backfill_attempt_secs: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub struct ProtocolPublishEvent {
-    pub event: Event,
+pub struct ProtocolPublishRegistration {
+    pub label: &'static str,
+    pub message_id: Option<String>,
+    pub chat_id: Option<String>,
     pub inner_event_id: Option<String>,
     pub target_owner_pubkey_hex: Option<String>,
     pub target_device_id: Option<String>,
 }
 
-#[derive(Clone, Debug)]
-pub enum ProtocolEffect {
-    PublishSigned(Event),
-    PublishSignedForInnerEvent {
-        event: Event,
+impl ProtocolPublishRegistration {
+    fn protocol(
+        message_id: Option<String>,
+        chat_id: Option<String>,
         inner_event_id: Option<String>,
         target_owner_pubkey_hex: Option<String>,
         target_device_id: Option<String>,
-    },
-    PublishStagedFirstContact {
-        bootstrap: Vec<ProtocolPublishEvent>,
-        payload: Vec<ProtocolPublishEvent>,
-    },
+    ) -> Self {
+        Self {
+            label: APPCORE_PROTOCOL_LABEL,
+            message_id,
+            chat_id,
+            inner_event_id,
+            target_owner_pubkey_hex,
+            target_device_id,
+        }
+    }
+
+    fn with_label(mut self, label: &'static str) -> Self {
+        self.label = label;
+        self
+    }
+
+    pub fn is_first_contact_payload(&self) -> bool {
+        self.label == APPCORE_PROTOCOL_FIRST_CONTACT_LABEL
+    }
+}
+
+impl Default for ProtocolPublishRegistration {
+    fn default() -> Self {
+        Self::protocol(None, None, None, None, None)
+    }
+}
+
+pub type ProtocolPublishRegistrations = BTreeMap<String, ProtocolPublishRegistration>;
+
+#[derive(Clone, Debug)]
+struct ProtocolPreparedPublish {
+    event: Event,
+    registration: ProtocolPublishRegistration,
+}
+
+#[derive(Clone, Debug)]
+pub enum ProtocolEffect {
+    Publish(Event),
     FetchProtocolState {
         filters: Vec<Filter>,
         reason: &'static str,
@@ -120,6 +153,7 @@ struct ProtocolPendingInbound {
     metadata_verified: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolPendingInboundTestDebug {
     pub event_id: String,
@@ -185,6 +219,7 @@ pub struct ProtocolDirectSendResult {
     pub message_id: String,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
+    pub publish_registrations: ProtocolPublishRegistrations,
     pub queued_targets: Vec<String>,
 }
 
@@ -194,6 +229,7 @@ pub struct ProtocolRetryResult {
     pub chat_id: String,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
+    pub publish_registrations: ProtocolPublishRegistrations,
     pub queued_targets: Vec<String>,
 }
 
@@ -203,6 +239,7 @@ pub struct ProtocolGroupSendResult {
     pub message_id: Option<String>,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
+    pub publish_registrations: ProtocolPublishRegistrations,
     pub queued_targets: Vec<String>,
 }
 
@@ -210,6 +247,7 @@ pub struct ProtocolGroupSendResult {
 pub struct ProtocolGroupIncomingResult {
     pub events: Vec<GroupIncomingEvent>,
     pub effects: Vec<ProtocolEffect>,
+    pub publish_registrations: ProtocolPublishRegistrations,
     pub queued_targets: Vec<String>,
     pub consumed: bool,
     pub pending: bool,
@@ -221,6 +259,7 @@ pub struct ProtocolRetryBatch {
     pub group_result: ProtocolGroupIncomingResult,
     pub direct_messages: Vec<ProtocolDecryptedMessage>,
     pub effects: Vec<ProtocolEffect>,
+    pub publish_registrations: ProtocolPublishRegistrations,
 }
 
 impl ProtocolRetryBatch {
@@ -228,9 +267,11 @@ impl ProtocolRetryBatch {
         self.direct_results.is_empty()
             && self.group_result.events.is_empty()
             && self.group_result.effects.is_empty()
+            && self.group_result.publish_registrations.is_empty()
             && self.group_result.queued_targets.is_empty()
             && self.direct_messages.is_empty()
             && self.effects.is_empty()
+            && self.publish_registrations.is_empty()
     }
 }
 
@@ -241,6 +282,7 @@ pub struct ProtocolAcceptInviteResult {
     pub inviter_device_pubkey: PublicKey,
     pub device_id: String,
     pub effects: Vec<ProtocolEffect>,
+    pub publish_registrations: ProtocolPublishRegistrations,
 }
 
 #[derive(Clone, Debug)]
@@ -362,6 +404,7 @@ pub struct ProtocolEngine {
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
+    #[cfg(test)]
     known_message_author_cache_build_count: std::cell::Cell<u64>,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,

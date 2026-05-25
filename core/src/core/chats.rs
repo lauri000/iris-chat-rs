@@ -202,18 +202,6 @@ impl AppCore {
         self.mark_mobile_push_dirty();
     }
 
-    pub(super) fn find_message_chat_id(&self, message_id: &str) -> Option<String> {
-        self.threads
-            .iter()
-            .find(|(_, thread)| {
-                thread
-                    .messages
-                    .iter()
-                    .any(|message| message.id == message_id)
-            })
-            .map(|(chat_id, _)| chat_id.clone())
-    }
-
     pub(super) fn normalize_chat_id(&self, chat_id: &str) -> Option<String> {
         if is_group_chat_id(chat_id) {
             let group_id = parse_group_id_from_chat_id(chat_id)?;
@@ -552,17 +540,7 @@ impl AppCore {
                     expires_at_secs,
                     delivery,
                 );
-                let completions = result
-                    .event_ids
-                    .iter()
-                    .map(|event_id| {
-                        (
-                            event_id.clone(),
-                            (result.message_id.clone(), normalized_chat_id.clone()),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>();
-                self.process_protocol_engine_effects_with_completions(result.effects, &completions);
+                self.process_protocol_engine_effects(result.effects, &result.publish_registrations);
                 self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
                 if !result.queued_targets.is_empty() {
                     self.handle_queued_protocol_targets("message.direct", &result.queued_targets);
@@ -634,24 +612,23 @@ impl AppCore {
                 } else {
                     DeliveryState::Pending
                 };
-                let staged_effects = result
+                let publish_effects = result
                     .effects
                     .iter()
-                    .filter(|effect| {
-                        matches!(effect, ProtocolEffect::PublishStagedFirstContact { .. })
-                    })
+                    .filter(|effect| matches!(effect, ProtocolEffect::Publish(_)))
                     .count();
-                let signed_effects = result
-                    .effects
-                    .iter()
-                    .filter(|effect| matches!(effect, ProtocolEffect::PublishSigned(_)))
+                let staged_effects = result
+                    .publish_registrations
+                    .values()
+                    .filter(|registration| {
+                        registration.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL
+                            || registration.label == APPCORE_PROTOCOL_FIRST_CONTACT_LABEL
+                    })
                     .count();
                 let targeted_effects = result
-                    .effects
-                    .iter()
-                    .filter(|effect| {
-                        matches!(effect, ProtocolEffect::PublishSignedForInnerEvent { .. })
-                    })
+                    .publish_registrations
+                    .values()
+                    .filter(|registration| registration.target_owner_pubkey_hex.is_some())
                     .count();
                 self.push_debug_log(
                     "message.group.send.appcore",
@@ -660,10 +637,10 @@ impl AppCore {
                         result.event_ids.len(),
                         result.effects.len(),
                         staged_effects,
-                        signed_effects,
+                        publish_effects,
                         targeted_effects,
                         result.queued_targets.len(),
-                        summarize_group_send_effect_targets(&result.effects)
+                        summarize_group_send_effect_targets(&result.publish_registrations)
                     ),
                 );
                 self.push_outgoing_message_with_id(
@@ -674,12 +651,7 @@ impl AppCore {
                     expires_at_secs,
                     delivery,
                 );
-                let completions = result
-                    .event_ids
-                    .iter()
-                    .map(|event_id| (event_id.clone(), (message_id.clone(), chat_id.to_string())))
-                    .collect::<BTreeMap<_, _>>();
-                self.process_protocol_engine_effects_with_completions(result.effects, &completions);
+                self.process_protocol_engine_effects(result.effects, &result.publish_registrations);
                 self.sync_message_delivery_trace(chat_id, &message_id);
                 if !result.queued_targets.is_empty() {
                     self.handle_queued_protocol_targets("message.group", &result.queued_targets);
@@ -912,9 +884,7 @@ impl AppCore {
             .as_ref()
             .map(|logged_in| logged_in.owner_pubkey.to_hex());
         let pending_relay = self.pending_relay_publishes.values().any(|pending| {
-            pending.chat_id.as_deref() == Some(chat_id)
-                && pending.message_id.as_deref() == Some(message_id)
-                && pending.target_owner_pubkey_hex.as_deref() != local_owner.as_deref()
+            pending.blocks_remote_delivery_for(chat_id, message_id, local_owner.as_deref())
         });
         let queued_protocol = self
             .protocol_engine
@@ -1351,10 +1321,7 @@ impl AppCore {
             .map(|engine| engine.send_group_payload(&group_id, payload, inner_event_id.clone()));
         match result {
             Some(Ok(result)) => {
-                self.process_protocol_engine_effects_with_completions(
-                    result.effects,
-                    &BTreeMap::new(),
-                );
+                self.process_protocol_engine_effects(result.effects, &result.publish_registrations);
                 if !result.queued_targets.is_empty() {
                     self.request_protocol_subscription_refresh();
                     if self.fetch_recent_protocol_state() {
@@ -1415,9 +1382,9 @@ impl AppCore {
                 for group_event in group_outcome.events {
                     self.apply_group_decrypted_event(group_event);
                 }
-                self.process_protocol_engine_effects_with_completions(
+                self.process_protocol_engine_effects(
                     group_outcome.effects,
-                    &BTreeMap::new(),
+                    &group_outcome.publish_registrations,
                 );
                 self.request_protocol_subscription_refresh();
                 return;
@@ -1429,9 +1396,9 @@ impl AppCore {
                         &group_outcome.queued_targets,
                     );
                 }
-                self.process_protocol_engine_effects_with_completions(
+                self.process_protocol_engine_effects(
                     group_outcome.effects,
-                    &BTreeMap::new(),
+                    &group_outcome.publish_registrations,
                 );
                 self.request_protocol_subscription_refresh();
                 return;
@@ -1831,49 +1798,28 @@ pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMes
     }
 }
 
-fn summarize_group_send_effect_targets(effects: &[ProtocolEffect]) -> String {
+fn summarize_group_send_effect_targets(registrations: &ProtocolPublishRegistrations) -> String {
     let mut targets = Vec::new();
-    for effect in effects {
-        match effect {
-            ProtocolEffect::PublishSigned(event) => {
-                targets.push(format!("signed:none:{}:{}", event.pubkey, event.id));
+    for (event_id, registration) in registrations {
+        let stage = match registration.label {
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL => "staged_bootstrap",
+            APPCORE_PROTOCOL_FIRST_CONTACT_LABEL => "staged_payload",
+            _ if registration.target_owner_pubkey_hex.is_some()
+                || registration.target_device_id.is_some() =>
+            {
+                "targeted"
             }
-            ProtocolEffect::PublishSignedForInnerEvent {
-                event,
-                target_owner_pubkey_hex,
-                target_device_id,
-                ..
-            } => {
-                targets.push(format!(
-                    "targeted:{}/{}:{}:{}",
-                    target_owner_pubkey_hex.as_deref().unwrap_or(""),
-                    target_device_id.as_deref().unwrap_or(""),
-                    event.pubkey,
-                    event.id
-                ));
-            }
-            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => {
-                for publish in bootstrap {
-                    targets.push(format!(
-                        "staged_bootstrap:{}/{}:{}:{}",
-                        publish.target_owner_pubkey_hex.as_deref().unwrap_or(""),
-                        publish.target_device_id.as_deref().unwrap_or(""),
-                        publish.event.pubkey,
-                        publish.event.id
-                    ));
-                }
-                for publish in payload {
-                    targets.push(format!(
-                        "staged_payload:{}/{}:{}:{}",
-                        publish.target_owner_pubkey_hex.as_deref().unwrap_or(""),
-                        publish.target_device_id.as_deref().unwrap_or(""),
-                        publish.event.pubkey,
-                        publish.event.id
-                    ));
-                }
-            }
-            _ => {}
-        }
+            _ => "signed",
+        };
+        targets.push(format!(
+            "{stage}:{}/{}:{}",
+            registration
+                .target_owner_pubkey_hex
+                .as_deref()
+                .unwrap_or(""),
+            registration.target_device_id.as_deref().unwrap_or(""),
+            event_id
+        ));
     }
     targets.join("|")
 }

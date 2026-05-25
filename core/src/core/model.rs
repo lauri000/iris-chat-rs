@@ -190,6 +190,69 @@ pub(super) struct PendingRelayPublish {
     pub(super) last_error: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PendingRelayPublishMessageRef {
+    pub(super) chat_id: String,
+    pub(super) message_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum PendingRelayPublishSuccessAction {
+    None,
+    MarkMessageSent {
+        message_ref: PendingRelayPublishMessageRef,
+        target_owner_pubkey_hex: Option<String>,
+    },
+    ReleaseFirstContactPayloads,
+}
+
+impl PendingRelayPublish {
+    pub(super) fn message_ref(&self) -> Option<PendingRelayPublishMessageRef> {
+        Some(PendingRelayPublishMessageRef {
+            chat_id: self.chat_id.clone()?,
+            message_id: self.message_id.clone()?,
+        })
+    }
+
+    pub(super) fn success_action(&self) -> PendingRelayPublishSuccessAction {
+        if self.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL {
+            return PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads;
+        }
+        self.message_ref()
+            .map(
+                |message_ref| PendingRelayPublishSuccessAction::MarkMessageSent {
+                    message_ref,
+                    target_owner_pubkey_hex: self.target_owner_pubkey_hex.clone(),
+                },
+            )
+            .unwrap_or(PendingRelayPublishSuccessAction::None)
+    }
+
+    pub(super) fn blocks_remote_delivery_for(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+        local_owner_pubkey_hex: Option<&str>,
+    ) -> bool {
+        self.chat_id.as_deref() == Some(chat_id)
+            && self.message_id.as_deref() == Some(message_id)
+            && self.target_owner_pubkey_hex.as_deref() != local_owner_pubkey_hex
+    }
+
+    pub(super) fn delays_first_contact_payload(&self) -> bool {
+        self.label == APPCORE_PROTOCOL_FIRST_CONTACT_LABEL
+    }
+
+    pub(super) fn matches_first_contact_bootstrap(&self, payload: &PendingRelayPublish) -> bool {
+        self.event_id != payload.event_id
+            && self.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL
+            && self.message_id == payload.message_id
+            && self.chat_id == payload.chat_id
+            && (self.target_owner_pubkey_hex.is_none()
+                || self.target_owner_pubkey_hex == payload.target_owner_pubkey_hex)
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(super) struct DebugEventCounters {
     pub(super) app_keys_events: u64,
