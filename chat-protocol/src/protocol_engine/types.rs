@@ -3,7 +3,6 @@ const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
 const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
-const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
 
 fn default_true() -> bool {
     true
@@ -43,13 +42,13 @@ struct ProtocolEnginePersistedState {
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum PendingRelayPublishSuccessActionKind {
+pub enum ProtocolPublishSuccessActionKind {
     #[default]
     None,
     MarkMessageSent,
 }
 
-impl PendingRelayPublishSuccessActionKind {
+impl ProtocolPublishSuccessActionKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
@@ -85,9 +84,9 @@ impl PendingRelayPublishSuccessActionKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct ProtocolPublishRegistration {
-    pub label: &'static str,
-    pub success_action_kind: PendingRelayPublishSuccessActionKind,
+pub struct ProtocolPublish {
+    pub event: Event,
+    pub success_action_kind: ProtocolPublishSuccessActionKind,
     pub message_id: Option<String>,
     pub chat_id: Option<String>,
     pub inner_event_id: Option<String>,
@@ -95,8 +94,9 @@ pub struct ProtocolPublishRegistration {
     pub target_device_id: Option<String>,
 }
 
-impl ProtocolPublishRegistration {
+impl ProtocolPublish {
     fn protocol(
+        event: Event,
         message_id: Option<String>,
         chat_id: Option<String>,
         inner_event_id: Option<String>,
@@ -104,8 +104,8 @@ impl ProtocolPublishRegistration {
         target_device_id: Option<String>,
     ) -> Self {
         Self {
-            label: APPCORE_PROTOCOL_LABEL,
-            success_action_kind: PendingRelayPublishSuccessActionKind::None,
+            event,
+            success_action_kind: ProtocolPublishSuccessActionKind::None,
             message_id,
             chat_id,
             inner_event_id,
@@ -116,30 +116,16 @@ impl ProtocolPublishRegistration {
 
     fn with_success_action_kind(
         mut self,
-        success_action_kind: PendingRelayPublishSuccessActionKind,
+        success_action_kind: ProtocolPublishSuccessActionKind,
     ) -> Self {
         self.success_action_kind = success_action_kind;
         self
     }
 }
 
-impl Default for ProtocolPublishRegistration {
-    fn default() -> Self {
-        Self::protocol(None, None, None, None, None)
-    }
-}
-
-pub type ProtocolPublishRegistrations = BTreeMap<String, ProtocolPublishRegistration>;
-
-#[derive(Clone, Debug)]
-struct ProtocolPreparedPublish {
-    event: Event,
-    registration: ProtocolPublishRegistration,
-}
-
 #[derive(Clone, Debug)]
 pub enum ProtocolEffect {
-    Publish(Event),
+    Publish(ProtocolPublish),
     FetchProtocolState {
         filters: Vec<Filter>,
         reason: &'static str,
@@ -267,7 +253,6 @@ pub struct ProtocolDirectSendResult {
     pub message_id: String,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
-    pub publish_registrations: ProtocolPublishRegistrations,
     pub queued_targets: Vec<String>,
 }
 
@@ -277,7 +262,6 @@ pub struct ProtocolRetryResult {
     pub chat_id: String,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
-    pub publish_registrations: ProtocolPublishRegistrations,
     pub queued_targets: Vec<String>,
 }
 
@@ -287,7 +271,6 @@ pub struct ProtocolGroupSendResult {
     pub message_id: Option<String>,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
-    pub publish_registrations: ProtocolPublishRegistrations,
     pub queued_targets: Vec<String>,
 }
 
@@ -295,7 +278,6 @@ pub struct ProtocolGroupSendResult {
 pub struct ProtocolGroupIncomingResult {
     pub events: Vec<GroupIncomingEvent>,
     pub effects: Vec<ProtocolEffect>,
-    pub publish_registrations: ProtocolPublishRegistrations,
     pub queued_targets: Vec<String>,
     pub consumed: bool,
     pub pending: bool,
@@ -307,7 +289,6 @@ pub struct ProtocolRetryBatch {
     pub group_result: ProtocolGroupIncomingResult,
     pub direct_messages: Vec<ProtocolDecryptedMessage>,
     pub effects: Vec<ProtocolEffect>,
-    pub publish_registrations: ProtocolPublishRegistrations,
 }
 
 impl ProtocolRetryBatch {
@@ -315,11 +296,9 @@ impl ProtocolRetryBatch {
         self.direct_results.is_empty()
             && self.group_result.events.is_empty()
             && self.group_result.effects.is_empty()
-            && self.group_result.publish_registrations.is_empty()
             && self.group_result.queued_targets.is_empty()
             && self.direct_messages.is_empty()
             && self.effects.is_empty()
-            && self.publish_registrations.is_empty()
     }
 }
 
@@ -330,7 +309,6 @@ pub struct ProtocolAcceptInviteResult {
     pub inviter_device_pubkey: PublicKey,
     pub device_id: String,
     pub effects: Vec<ProtocolEffect>,
-    pub publish_registrations: ProtocolPublishRegistrations,
 }
 
 #[derive(Clone, Debug)]

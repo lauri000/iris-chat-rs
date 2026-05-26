@@ -188,14 +188,21 @@ impl ProtocolEngine {
             self.owner_pubkey,
             pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis()).with_expiration(1),
         )?;
-        let bootstrap =
+        let mut bootstrap =
             self.send_direct_unsigned_event(invite_owner, &invite_owner.to_hex(), typing, now)?;
+        for effect in &mut bootstrap.effects {
+            if let ProtocolEffect::Publish(publish) = effect {
+                publish.success_action_kind = ProtocolPublishSuccessActionKind::None;
+                publish.message_id = None;
+                publish.chat_id = None;
+                publish.inner_event_id = None;
+            }
+        }
         Ok(ProtocolAcceptInviteResult {
             owner_pubkey: invite_owner,
             inviter_device_pubkey: public_device(invite.inviter_device_pubkey)?,
             device_id: public_device(invite.inviter_device_pubkey)?.to_hex(),
             effects: bootstrap.effects,
-            publish_registrations: bootstrap.publish_registrations,
         })
     }
 
@@ -590,14 +597,12 @@ impl ProtocolEngine {
         )?;
 
         let mut event_ids = Vec::new();
-        let mut publish_registrations = ProtocolPublishRegistrations::default();
         let mut effects = protocol_effects_from_prepared(
             &remote,
             inner_event_id.clone(),
             Some(message_id.clone()),
             Some(chat_id.to_string()),
             &mut event_ids,
-            &mut publish_registrations,
         )?;
 
         let remote_delivered = delivered_device_hexes(&remote);
@@ -642,7 +647,6 @@ impl ProtocolEngine {
             message_id,
             event_ids,
             effects,
-            publish_registrations,
             queued_targets,
         })
     }
@@ -662,14 +666,12 @@ impl ProtocolEngine {
             .prepare_local_sibling_send_reusing_sessions(&mut ctx, local_sibling_payload.clone())?;
 
         let mut event_ids = Vec::new();
-        let mut publish_registrations = ProtocolPublishRegistrations::default();
         let mut effects = protocol_effects_from_prepared(
             &local,
             inner_event_id.clone(),
             Some(message_id.clone()),
             Some(chat_id.to_string()),
             &mut event_ids,
-            &mut publish_registrations,
         )?;
 
         let local_delivered = delivered_device_hexes(&local);
@@ -710,7 +712,6 @@ impl ProtocolEngine {
             message_id,
             event_ids,
             effects,
-            publish_registrations,
             queued_targets,
         })
     }
@@ -739,14 +740,12 @@ impl ProtocolEngine {
 
         let mut event_ids = Vec::new();
         let mut effects = Vec::new();
-        let mut publish_registrations = ProtocolPublishRegistrations::default();
         effects.extend(protocol_effects_from_prepared(
             &remote,
             inner_event_id.clone(),
             Some(message_id.clone()),
             Some(chat_id.to_string()),
             &mut event_ids,
-            &mut publish_registrations,
         )?);
         effects.extend(protocol_effects_from_prepared(
             &local,
@@ -754,7 +753,6 @@ impl ProtocolEngine {
             Some(message_id.clone()),
             Some(chat_id.to_string()),
             &mut event_ids,
-            &mut publish_registrations,
         )?);
 
         let remote_delivered = delivered_device_hexes(&remote);
@@ -801,7 +799,6 @@ impl ProtocolEngine {
             message_id,
             event_ids,
             effects,
-            publish_registrations,
             queued_targets,
         })
     }

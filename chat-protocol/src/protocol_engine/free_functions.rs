@@ -4,40 +4,36 @@ fn protocol_effects_from_prepared(
     message_id: Option<String>,
     chat_id: Option<String>,
     event_ids: &mut Vec<String>,
-    publish_registrations: &mut ProtocolPublishRegistrations,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
     let mut bootstrap = Vec::new();
     let mut payload = Vec::new();
     let target_owner_pubkey_hex = Some(public_owner(prepared.recipient_owner)?.to_hex());
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        bootstrap.push(ProtocolPreparedPublish {
-            registration: ProtocolPublishRegistration::protocol(
-                message_id.clone(),
-                chat_id.clone(),
-                inner_event_id.clone(),
-                target_owner_pubkey_hex.clone(),
-                None,
-            ),
+        bootstrap.push(ProtocolPublish::protocol(
             event,
-        });
+            message_id.clone(),
+            chat_id.clone(),
+            inner_event_id.clone(),
+            target_owner_pubkey_hex.clone(),
+            None,
+        ));
     }
     for delivery in &prepared.deliveries {
         let event = message_event(&delivery.envelope)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPreparedPublish {
-            registration: ProtocolPublishRegistration::protocol(
-                message_id.clone(),
-                chat_id.clone(),
-                inner_event_id.clone(),
-                Some(public_owner(delivery.owner_pubkey)?.to_hex()),
-                Some(public_device(delivery.device_pubkey)?.to_hex()),
-            )
-            .with_success_action_kind(PendingRelayPublishSuccessActionKind::MarkMessageSent),
+        let publish = ProtocolPublish::protocol(
             event,
-        });
+            message_id.clone(),
+            chat_id.clone(),
+            inner_event_id.clone(),
+            Some(public_owner(delivery.owner_pubkey)?.to_hex()),
+            Some(public_device(delivery.device_pubkey)?.to_hex()),
+        )
+        .with_success_action_kind(ProtocolPublishSuccessActionKind::MarkMessageSent);
+        payload.push(publish);
     }
-    Ok(protocol_publish_effects(bootstrap, payload, publish_registrations))
+    Ok(protocol_publish_effects(bootstrap, payload))
 }
 
 fn protocol_effects_from_group_prepared_publish(
@@ -46,68 +42,55 @@ fn protocol_effects_from_group_prepared_publish(
     message_id: Option<String>,
     chat_id: Option<String>,
     event_ids: &mut Vec<String>,
-    publish_registrations: &mut ProtocolPublishRegistrations,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
     let mut bootstrap = Vec::new();
     let mut payload = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        bootstrap.push(ProtocolPreparedPublish {
-            registration: ProtocolPublishRegistration::protocol(
-                message_id.clone(),
-                chat_id.clone(),
-                inner_event_id.clone(),
-                None,
-                None,
-            ),
+        bootstrap.push(ProtocolPublish::protocol(
             event,
-        });
+            message_id.clone(),
+            chat_id.clone(),
+            inner_event_id.clone(),
+            None,
+            None,
+        ));
     }
     for delivery in &prepared.deliveries {
         let event = message_event(&delivery.envelope)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPreparedPublish {
-            registration: ProtocolPublishRegistration::protocol(
-                message_id.clone(),
-                chat_id.clone(),
-                inner_event_id.clone(),
-                Some(public_owner(delivery.owner_pubkey)?.to_hex()),
-                Some(public_device(delivery.device_pubkey)?.to_hex()),
-            )
-            .with_success_action_kind(PendingRelayPublishSuccessActionKind::MarkMessageSent),
+        let publish = ProtocolPublish::protocol(
             event,
-        });
+            message_id.clone(),
+            chat_id.clone(),
+            inner_event_id.clone(),
+            Some(public_owner(delivery.owner_pubkey)?.to_hex()),
+            Some(public_device(delivery.device_pubkey)?.to_hex()),
+        )
+        .with_success_action_kind(ProtocolPublishSuccessActionKind::MarkMessageSent);
+        payload.push(publish);
     }
     for sender_key_message in &prepared.sender_key_messages {
         let event = group_sender_key_message_event(sender_key_message)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPreparedPublish {
-            registration: ProtocolPublishRegistration::protocol(None, None, None, None, None),
-            event,
-        });
+        payload.push(ProtocolPublish::protocol(event, None, None, None, None, None));
     }
-    Ok(protocol_publish_effects(bootstrap, payload, publish_registrations))
+    Ok(protocol_publish_effects(bootstrap, payload))
 }
 
 fn protocol_publish_effects(
-    bootstrap: Vec<ProtocolPreparedPublish>,
-    payload: Vec<ProtocolPreparedPublish>,
-    publish_registrations: &mut ProtocolPublishRegistrations,
+    bootstrap: Vec<ProtocolPublish>,
+    payload: Vec<ProtocolPublish>,
 ) -> Vec<ProtocolEffect> {
     let mut effects = Vec::with_capacity(bootstrap.len() + payload.len());
     for publish in bootstrap.into_iter().chain(payload) {
-        effects.push(protocol_publish_effect(publish, publish_registrations));
+        effects.push(protocol_publish_effect(publish));
     }
     effects
 }
 
-fn protocol_publish_effect(
-    publish: ProtocolPreparedPublish,
-    publish_registrations: &mut ProtocolPublishRegistrations,
-) -> ProtocolEffect {
-    let event_id = publish.event.id.to_string();
-    publish_registrations.insert(event_id, publish.registration);
-    ProtocolEffect::Publish(publish.event)
+fn protocol_publish_effect(publish: ProtocolPublish) -> ProtocolEffect {
+    ProtocolEffect::Publish(publish)
 }
 
 fn sort_dedup_protocol_pubkeys(pubkeys: &mut Vec<PublicKey>) {

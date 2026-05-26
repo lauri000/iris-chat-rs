@@ -216,7 +216,6 @@ impl ProtocolEngine {
         );
         let mut event_ids = Vec::new();
         let mut effects = Vec::new();
-        let mut publish_registrations = ProtocolPublishRegistrations::default();
         let message_id = inner_event_id.clone();
         let chat_id = message_id
             .as_ref()
@@ -227,7 +226,6 @@ impl ProtocolEngine {
             message_id.clone(),
             chat_id.clone(),
             &mut event_ids,
-            &mut publish_registrations,
         )?);
         effects.extend(protocol_effects_from_group_prepared_publish(
             &prepared.remote,
@@ -235,7 +233,6 @@ impl ProtocolEngine {
             message_id,
             chat_id,
             &mut event_ids,
-            &mut publish_registrations,
         )?);
         let mut queued_targets = self.queued_group_targets();
         queued_targets.sort();
@@ -249,7 +246,6 @@ impl ProtocolEngine {
         Ok(ProtocolGroupSendResult {
             event_ids,
             effects,
-            publish_registrations,
             queued_targets,
             ..Default::default()
         })
@@ -258,11 +254,7 @@ impl ProtocolEngine {
     fn sync_group_to_local_siblings(
         &mut self,
         group: &GroupSnapshot,
-    ) -> anyhow::Result<(
-        Vec<ProtocolEffect>,
-        ProtocolPublishRegistrations,
-        Vec<String>,
-    )> {
+    ) -> anyhow::Result<(Vec<ProtocolEffect>, Vec<String>)> {
         let now = NdrUnixSeconds(unix_now().get());
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(now, &mut rng);
@@ -273,14 +265,12 @@ impl ProtocolEngine {
         )?;
         self.queue_group_pending_fanouts(&group.group_id, &prepared, None);
         let mut event_ids = Vec::new();
-        let mut publish_registrations = ProtocolPublishRegistrations::default();
         let mut effects = protocol_effects_from_group_prepared_publish(
             &prepared,
             None,
             None,
             None,
             &mut event_ids,
-            &mut publish_registrations,
         )?;
         let mut queued_targets = self.queued_group_targets();
         queued_targets.sort();
@@ -291,7 +281,7 @@ impl ProtocolEngine {
             now,
             "group_local_sibling_sync",
         );
-        Ok((effects, publish_registrations, queued_targets))
+        Ok((effects, queued_targets))
     }
 
     fn queue_group_pending_fanouts(
@@ -606,15 +596,13 @@ impl ProtocolEngine {
                         "pending sender-key result did not produce a repair request"
                     );
                 };
-                        let (effects, publish_registrations) =
-                            self.sender_key_repair_request_effects(request, now)?;
-                        Ok(ProtocolGroupIncomingResult {
-                            consumed: true,
-                            pending: true,
-                            effects,
-                            publish_registrations,
-                            ..Default::default()
-                        })
+                let effects = self.sender_key_repair_request_effects(request, now)?;
+                Ok(ProtocolGroupIncomingResult {
+                    consumed: true,
+                    pending: true,
+                    effects,
+                    ..Default::default()
+                })
             }
             GroupSenderKeyHandleResult::Ignored => {
                 self.clear_group_sender_key_repairs(
@@ -635,7 +623,7 @@ impl ProtocolEngine {
         &mut self,
         request: SenderKeyRepairRequest,
         now: NdrUnixSeconds,
-    ) -> anyhow::Result<(Vec<ProtocolEffect>, ProtocolPublishRegistrations)> {
+    ) -> anyhow::Result<Vec<ProtocolEffect>> {
         let sender_event_pubkey_hex = request.sender_event_pubkey.to_hex();
         let position = self
             .pending_group_sender_key_repairs
@@ -668,7 +656,7 @@ impl ProtocolEngine {
             anyhow::bail!("pending sender-key repair index disappeared");
         };
         if pending_repair.next_retry_at_secs > now.get() {
-            return Ok((Vec::new(), ProtocolPublishRegistrations::default()));
+            return Ok(Vec::new());
         }
 
         let mut rng = OsRng;
@@ -686,13 +674,13 @@ impl ProtocolEngine {
                 sender_key_repair_default_next_retry_at(now, pending.request_count).get();
         }
         self.invalidate_known_message_author_cache();
-        Ok((output.effects, output.publish_registrations))
+        Ok(output.effects)
     }
 
     fn retry_pending_group_sender_key_repairs(
         &mut self,
         now: NdrUnixSeconds,
-    ) -> anyhow::Result<(Vec<ProtocolEffect>, ProtocolPublishRegistrations)> {
+    ) -> anyhow::Result<Vec<ProtocolEffect>> {
         let requests = self
             .pending_group_sender_key_repairs
             .iter()
@@ -710,14 +698,11 @@ impl ProtocolEngine {
             })
             .collect::<Vec<_>>();
         let mut effects = Vec::new();
-        let mut publish_registrations = ProtocolPublishRegistrations::default();
         for request in requests {
-            let (repair_effects, repair_registrations) =
-                self.sender_key_repair_request_effects(request, now)?;
+            let repair_effects = self.sender_key_repair_request_effects(request, now)?;
             effects.extend(repair_effects);
-            publish_registrations.extend(repair_registrations);
         }
-        Ok((effects, publish_registrations))
+        Ok(effects)
     }
 
     fn sender_key_repair_response_effects(
@@ -725,11 +710,7 @@ impl ProtocolEngine {
         requester_owner: NdrOwnerPubkey,
         request: &SenderKeyRepairRequest,
         now: NdrUnixSeconds,
-    ) -> anyhow::Result<(
-        Vec<ProtocolEffect>,
-        ProtocolPublishRegistrations,
-        Vec<String>,
-    )> {
+    ) -> anyhow::Result<(Vec<ProtocolEffect>, Vec<String>)> {
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(now, &mut rng);
         let prepared = self.group_manager.respond_to_sender_key_repair_request(
@@ -740,11 +721,7 @@ impl ProtocolEngine {
         )?;
         let output = self.protocol_group_send_from_prepared(&prepared, None)?;
         self.invalidate_known_message_author_cache();
-        Ok((
-            output.effects,
-            output.publish_registrations,
-            output.queued_targets,
-        ))
+        Ok((output.effects, output.queued_targets))
     }
 
     fn clear_group_sender_key_repairs(

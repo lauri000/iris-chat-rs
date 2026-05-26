@@ -89,7 +89,6 @@ mod support;
 mod tests;
 
 pub(crate) const NEARBY_PRESENCE_KIND: u16 = 22242;
-#[cfg(test)]
 pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
 
 type OwnerPubkey = PublicKey;

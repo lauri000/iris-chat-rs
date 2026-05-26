@@ -188,10 +188,7 @@ impl AppCore {
                             self.apply_group_decrypted_event(group_event);
                         }
                         if !group_result.effects.is_empty() {
-                            self.process_protocol_engine_effects(
-                                group_result.effects,
-                                &group_result.publish_registrations,
-                            );
+                            self.process_protocol_engine_effects(group_result.effects);
                         }
                         if should_remember_group_event {
                             self.remember_event(event_id);
@@ -279,10 +276,7 @@ impl AppCore {
                                 )
                             })
                             .unwrap_or_default();
-                        self.process_protocol_engine_effects(
-                            effects,
-                            &ProtocolPublishRegistrations::default(),
-                        );
+                        self.process_protocol_engine_effects(effects);
                         if queued_targets.is_empty() {
                             self.request_protocol_subscription_refresh();
                             self.schedule_protocol_subscription_liveness_check(
@@ -379,21 +373,12 @@ impl AppCore {
         true
     }
 
-    pub(super) fn process_protocol_engine_effects(
-        &mut self,
-        mut effects: Vec<ProtocolEffect>,
-        publish_registrations: &ProtocolPublishRegistrations,
-    ) {
+    pub(super) fn process_protocol_engine_effects(&mut self, mut effects: Vec<ProtocolEffect>) {
         coalesce_protocol_fetch_effects(&mut effects);
         for effect in effects {
             match effect {
-                ProtocolEffect::Publish(event) => {
-                    let event_id = event.id.to_string();
-                    let registration = publish_registrations
-                        .get(&event_id)
-                        .cloned()
-                        .unwrap_or_default();
-                    self.publish_runtime_event_with_registration(event, registration);
+                ProtocolEffect::Publish(publish) => {
+                    self.publish_protocol_event(publish);
                 }
                 ProtocolEffect::FetchProtocolState { filters, reason } => {
                     self.fetch_protocol_state_for_filters(filters, reason);

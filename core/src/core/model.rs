@@ -181,7 +181,7 @@ pub(super) struct PendingRelayPublish {
     pub(super) label: String,
     pub(super) event_json: String,
     #[serde(default)]
-    pub(super) success_action_kind: PendingRelayPublishSuccessActionKind,
+    pub(super) success_action_kind: ProtocolPublishSuccessActionKind,
     pub(super) inner_event_id: Option<String>,
     pub(super) target_owner_pubkey_hex: Option<String>,
     pub(super) target_device_id: Option<String>,
@@ -217,8 +217,8 @@ impl PendingRelayPublish {
 
     pub(super) fn success_action(&self) -> PendingRelayPublishSuccessAction {
         match self.success_action_kind {
-            PendingRelayPublishSuccessActionKind::None => PendingRelayPublishSuccessAction::None,
-            PendingRelayPublishSuccessActionKind::MarkMessageSent => self
+            ProtocolPublishSuccessActionKind::None => PendingRelayPublishSuccessAction::None,
+            ProtocolPublishSuccessActionKind::MarkMessageSent => self
                 .message_ref()
                 .map(
                     |message_ref| PendingRelayPublishSuccessAction::MarkMessageSent {

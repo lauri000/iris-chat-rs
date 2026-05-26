@@ -1,7 +1,7 @@
 use super::super::{
     KnownAppKeyDevice, KnownAppKeys, OwnerProfileRecord, PendingRelayPublish,
-    PendingRelayPublishSuccessActionKind, PersistedAuthorizationState, PersistedDeliveryState,
-    PersistedMessage, PersistedPreferences, PersistedState, PersistedThread, ThreadRecord,
+    PersistedAuthorizationState, PersistedDeliveryState, PersistedMessage, PersistedPreferences,
+    PersistedState, PersistedThread, ProtocolPublishSuccessActionKind, ThreadRecord,
     PERSISTED_STATE_VERSION,
 };
 use super::SharedConnection;
@@ -367,7 +367,7 @@ impl AppStore {
                 event_id: row.get(1)?,
                 label: row.get(2)?,
                 event_json: row.get(3)?,
-                success_action_kind: PendingRelayPublishSuccessActionKind::from_storage(
+                success_action_kind: ProtocolPublishSuccessActionKind::from_storage(
                     &row.get::<_, String>(4)?,
                 ),
                 inner_event_id: row.get(5)?,
@@ -1735,7 +1735,7 @@ mod tests {
             event_id: "event-1".to_string(),
             label: "runtime".to_string(),
             event_json: "{}".to_string(),
-            success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
+            success_action_kind: ProtocolPublishSuccessActionKind::MarkMessageSent,
             inner_event_id: Some("inner".to_string()),
             target_owner_pubkey_hex: Some("peer".to_string()),
             target_device_id: Some("device".to_string()),
@@ -1752,7 +1752,7 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(
             loaded[0].success_action_kind,
-            PendingRelayPublishSuccessActionKind::MarkMessageSent
+            ProtocolPublishSuccessActionKind::MarkMessageSent
         );
     }
 
