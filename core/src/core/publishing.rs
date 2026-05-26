@@ -33,28 +33,47 @@ impl AppCore {
         let (message_id, chat_id) = completion
             .map(|(message_id, chat_id)| (Some(message_id), Some(chat_id)))
             .unwrap_or((None, None));
-        self.publish_runtime_event_with_registration(
+        let success_action_kind = if message_id.is_some() && chat_id.is_some() {
+            ProtocolPublishSuccessActionKind::MarkMessageSent
+        } else {
+            ProtocolPublishSuccessActionKind::None
+        };
+        self.publish_runtime_event_with_metadata(
             event,
-            ProtocolPublishRegistration {
-                label,
-                success_action_kind: if message_id.is_some() && chat_id.is_some() {
-                    PendingRelayPublishSuccessActionKind::MarkMessageSent
-                } else {
-                    PendingRelayPublishSuccessActionKind::None
-                },
-                message_id,
-                chat_id,
-                inner_event_id: None,
-                target_owner_pubkey_hex: None,
-                target_device_id: None,
-            },
+            label,
+            success_action_kind,
+            message_id,
+            chat_id,
+            None,
+            None,
+            None,
         )
     }
 
-    pub(super) fn publish_runtime_event_with_registration(
+    pub(super) fn publish_protocol_event(&mut self, publish: ProtocolPublish) -> bool {
+        self.publish_runtime_event_with_metadata(
+            publish.event,
+            APPCORE_PROTOCOL_LABEL,
+            publish.success_action_kind,
+            publish.message_id,
+            publish.chat_id,
+            publish.inner_event_id,
+            publish.target_owner_pubkey_hex,
+            publish.target_device_id,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn publish_runtime_event_with_metadata(
         &mut self,
         event: Event,
-        registration: ProtocolPublishRegistration,
+        label: &'static str,
+        success_action_kind: ProtocolPublishSuccessActionKind,
+        message_id: Option<String>,
+        chat_id: Option<String>,
+        inner_event_id: Option<String>,
+        target_owner_pubkey_hex: Option<String>,
+        target_device_id: Option<String>,
     ) -> bool {
         if self.defer_owner_app_keys_publish && is_app_keys_event(&event) {
             self.push_debug_log(
@@ -66,8 +85,16 @@ impl AppCore {
         self.remember_event(event.id.to_string());
         self.emit_nearby_published_event(&event);
         let event_id = event.id.to_string();
-        let label = registration.label;
-        let stored = self.remember_pending_relay_publish(&event, registration);
+        let stored = self.remember_pending_relay_publish(
+            &event,
+            label,
+            success_action_kind,
+            message_id,
+            chat_id,
+            inner_event_id,
+            target_owner_pubkey_hex,
+            target_device_id,
+        );
         if !stored {
             return false;
         }
@@ -95,7 +122,13 @@ impl AppCore {
     fn remember_pending_relay_publish(
         &mut self,
         event: &Event,
-        registration: ProtocolPublishRegistration,
+        label: &str,
+        success_action_kind: ProtocolPublishSuccessActionKind,
+        message_id: Option<String>,
+        chat_id: Option<String>,
+        inner_event_id: Option<String>,
+        target_owner_pubkey_hex: Option<String>,
+        target_device_id: Option<String>,
     ) -> bool {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return false;
@@ -109,21 +142,21 @@ impl AppCore {
             }
         };
         let pending = PendingRelayPublish {
-            success_action_kind: registration.success_action_kind.for_pending_publish(
+            success_action_kind: success_action_kind.for_pending_publish(
                 &owner_pubkey_hex,
-                registration.chat_id.as_deref(),
-                registration.message_id.as_deref(),
-                registration.target_owner_pubkey_hex.as_deref(),
+                chat_id.as_deref(),
+                message_id.as_deref(),
+                target_owner_pubkey_hex.as_deref(),
             ),
             owner_pubkey_hex,
             event_id: event.id.to_string(),
-            label: registration.label.to_string(),
+            label: label.to_string(),
             event_json,
-            inner_event_id: registration.inner_event_id,
-            target_owner_pubkey_hex: registration.target_owner_pubkey_hex,
-            target_device_id: registration.target_device_id,
-            message_id: registration.message_id,
-            chat_id: registration.chat_id,
+            inner_event_id,
+            target_owner_pubkey_hex,
+            target_device_id,
+            message_id,
+            chat_id,
             created_at_secs: event.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,

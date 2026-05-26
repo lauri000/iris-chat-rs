@@ -330,21 +330,29 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
         "missing peer laptop should remain queued"
     );
     let bootstrap_events = protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND);
-    let bootstrap_registrations = result
+    let bootstrap_publishes = result
         .effects
         .iter()
         .filter_map(|effect| match effect {
-            ProtocolEffect::Publish(event) if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND => {
-                result.publish_registrations.get(&event.id.to_string())
+            ProtocolEffect::Publish(publish)
+                if publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND =>
+            {
+                Some(publish)
             }
             _ => None,
         })
         .collect::<Vec<_>>();
-    let payload_registrations = result
-        .publish_registrations
-        .values()
-        .filter(|registration| {
-            registration.success_action_kind == PendingRelayPublishSuccessActionKind::MarkMessageSent
+    let payload_publishes = result
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::Publish(publish)
+                if publish.success_action_kind
+                    == ProtocolPublishSuccessActionKind::MarkMessageSent =>
+            {
+                Some(publish)
+            }
+            _ => None,
         })
         .collect::<Vec<_>>();
     assert!(
@@ -354,26 +362,26 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
         "bootstrap phase should contain the invite response"
     );
     assert_eq!(
-        bootstrap_registrations[0].inner_event_id.as_deref(),
+        bootstrap_publishes[0].inner_event_id.as_deref(),
         Some(result.message_id.as_str()),
         "bootstrap publish must be tied to the app message for durable tracing"
     );
     assert_eq!(
-        bootstrap_registrations[0].success_action_kind,
-        PendingRelayPublishSuccessActionKind::None,
+        bootstrap_publishes[0].success_action_kind,
+        ProtocolPublishSuccessActionKind::None,
         "bootstrap publish success is receiver-side state and must not release payloads"
     );
     assert_eq!(
-        bootstrap_registrations[0].target_owner_pubkey_hex.as_deref(),
+        bootstrap_publishes[0].target_owner_pubkey_hex.as_deref(),
         Some(peer_owner.public_key().to_hex().as_str())
     );
     assert_eq!(
-        payload_registrations.len(),
+        payload_publishes.len(),
         1,
         "payload phase should contain the ready phone delivery"
     );
     assert_eq!(
-        payload_registrations[0].target_owner_pubkey_hex.as_deref(),
+        payload_publishes[0].target_owner_pubkey_hex.as_deref(),
         Some(peer_owner.public_key().to_hex().as_str())
     );
 
@@ -666,7 +674,6 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
 
     let local_sibling_events = protocol_publish_events_for_target(
         &result.effects,
-        &result.publish_registrations,
         &owner.public_key().to_hex(),
         &linked_device.public_key().to_hex(),
     );
@@ -804,7 +811,6 @@ fn remote_group_metadata_syncs_to_local_sibling() {
     let bootstrap_events = protocol_publish_events_with_kind(&outcome.effects, INVITE_RESPONSE_KIND);
     let sibling_payload_events = protocol_publish_events_for_target(
         &outcome.effects,
-        &outcome.publish_registrations,
         &target_owner_hex,
         &target_device_hex,
     );
@@ -953,7 +959,7 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
     let target_owner_hex = owner.public_key().to_hex();
     let target_device_hex = primary_device.public_key().to_hex();
     let metadata_bootstrap_events = if protocol_has_publish_target(
-        &linked_metadata_result.publish_registrations,
+        &linked_metadata_result.effects,
         &target_owner_hex,
         &target_device_hex,
     ) {
@@ -982,12 +988,11 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
         .expect("linked group send");
     let local_sibling_events = protocol_publish_events_for_target(
         &result.effects,
-        &result.publish_registrations,
         &target_owner_hex,
         &target_device_hex,
     );
     let local_sibling_bootstrap_events = if protocol_has_publish_target(
-        &result.publish_registrations,
+        &result.effects,
         &target_owner_hex,
         &target_device_hex,
     ) {
@@ -1018,7 +1023,7 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
 fn pending_relay_publish_success_action_ignores_local_device_targets() {
     let local_owner = "local-owner".to_string();
     let peer_owner = "peer-owner".to_string();
-    let pending = |success_action_kind: PendingRelayPublishSuccessActionKind,
+    let pending = |success_action_kind: ProtocolPublishSuccessActionKind,
                    target_owner_pubkey_hex: Option<String>|
      -> PendingRelayPublish {
         PendingRelayPublish {
@@ -1039,44 +1044,44 @@ fn pending_relay_publish_success_action_ignores_local_device_targets() {
     };
 
     assert_eq!(
-        PendingRelayPublishSuccessActionKind::MarkMessageSent.for_pending_publish(
+        ProtocolPublishSuccessActionKind::MarkMessageSent.for_pending_publish(
             &local_owner,
             Some("chat-1"),
             Some("message-1"),
             Some(&local_owner),
         ),
-        PendingRelayPublishSuccessActionKind::None
+        ProtocolPublishSuccessActionKind::None
     );
     assert_eq!(
         pending(
-            PendingRelayPublishSuccessActionKind::None,
+            ProtocolPublishSuccessActionKind::None,
             Some(local_owner.clone())
         )
         .success_action(),
         PendingRelayPublishSuccessAction::None
     );
     assert_eq!(
-        PendingRelayPublishSuccessActionKind::None.for_pending_publish(
+        ProtocolPublishSuccessActionKind::None.for_pending_publish(
             &local_owner,
             Some("chat-1"),
             Some("message-1"),
             Some(&peer_owner),
         ),
-        PendingRelayPublishSuccessActionKind::None,
+        ProtocolPublishSuccessActionKind::None,
         "bootstrap registrations explicitly store no publish-success action"
     );
     assert_eq!(
-        PendingRelayPublishSuccessActionKind::MarkMessageSent.for_pending_publish(
+        ProtocolPublishSuccessActionKind::MarkMessageSent.for_pending_publish(
             &local_owner,
             Some("chat-1"),
             Some("message-1"),
             Some(&peer_owner),
         ),
-        PendingRelayPublishSuccessActionKind::MarkMessageSent
+        ProtocolPublishSuccessActionKind::MarkMessageSent
     );
     assert_eq!(
         pending(
-            PendingRelayPublishSuccessActionKind::MarkMessageSent,
+            ProtocolPublishSuccessActionKind::MarkMessageSent,
             Some(peer_owner.clone())
         )
         .success_action(),
@@ -1119,7 +1124,7 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
             event_id: local_event_id.clone(),
             label: "test".to_string(),
             event_json: serde_json::to_string(&local_event).expect("event json"),
-            success_action_kind: PendingRelayPublishSuccessActionKind::None,
+            success_action_kind: ProtocolPublishSuccessActionKind::None,
             inner_event_id: Some(message_id.clone()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: local_event.created_at.as_secs(),
@@ -1185,7 +1190,7 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
             event_id: lingering_local_event_id.clone(),
             label: "test".to_string(),
             event_json: serde_json::to_string(&lingering_local_event).expect("event json"),
-            success_action_kind: PendingRelayPublishSuccessActionKind::None,
+            success_action_kind: ProtocolPublishSuccessActionKind::None,
             inner_event_id: Some(message_id.clone()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: lingering_local_event.created_at.as_secs(),
@@ -1205,7 +1210,7 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
             event_id: peer_event_id.clone(),
             label: "test".to_string(),
             event_json: serde_json::to_string(&peer_event).expect("event json"),
-            success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
+            success_action_kind: ProtocolPublishSuccessActionKind::MarkMessageSent,
             inner_event_id: Some(message_id.clone()),
             target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
             target_device_id: Some(peer.public_key().to_hex()),
@@ -1298,7 +1303,7 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
             event_id: bootstrap_event_id.clone(),
             label: APPCORE_PROTOCOL_LABEL.to_string(),
             event_json: serde_json::to_string(&bootstrap_event).expect("event json"),
-            success_action_kind: PendingRelayPublishSuccessActionKind::None,
+            success_action_kind: ProtocolPublishSuccessActionKind::None,
             inner_event_id: Some(message_id.clone()),
             target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
             target_device_id: None,
@@ -1321,7 +1326,7 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
             event_id: payload_event_id.clone(),
             label: APPCORE_PROTOCOL_LABEL.to_string(),
             event_json: serde_json::to_string(&payload_event).expect("event json"),
-            success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
+            success_action_kind: ProtocolPublishSuccessActionKind::MarkMessageSent,
             inner_event_id: Some(message_id.clone()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: payload_event.created_at.as_secs(),

@@ -547,7 +547,7 @@ impl AppCore {
                     expires_at_secs,
                     delivery,
                 );
-                self.process_protocol_engine_effects(result.effects, &result.publish_registrations);
+                self.process_protocol_engine_effects(result.effects);
                 self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
                 self.reconcile_outgoing_message_delivery(&normalized_chat_id, &result.message_id);
                 if !result.queued_targets.is_empty() {
@@ -626,16 +626,26 @@ impl AppCore {
                     .filter(|effect| matches!(effect, ProtocolEffect::Publish(_)))
                     .count();
                 let targeted_effects = result
-                    .publish_registrations
-                    .values()
-                    .filter(|registration| registration.target_owner_pubkey_hex.is_some())
+                    .effects
+                    .iter()
+                    .filter(|effect| {
+                        matches!(
+                            effect,
+                            ProtocolEffect::Publish(publish)
+                                if publish.target_owner_pubkey_hex.is_some()
+                        )
+                    })
                     .count();
                 let mark_sent_effects = result
-                    .publish_registrations
-                    .values()
-                    .filter(|registration| {
-                        registration.success_action_kind
-                            == PendingRelayPublishSuccessActionKind::MarkMessageSent
+                    .effects
+                    .iter()
+                    .filter(|effect| {
+                        matches!(
+                            effect,
+                            ProtocolEffect::Publish(publish)
+                                if publish.success_action_kind
+                                    == ProtocolPublishSuccessActionKind::MarkMessageSent
+                        )
                     })
                     .count();
                 self.push_debug_log(
@@ -648,7 +658,7 @@ impl AppCore {
                         targeted_effects,
                         mark_sent_effects,
                         result.queued_targets.len(),
-                        summarize_group_send_effect_targets(&result.publish_registrations)
+                        summarize_group_send_effect_targets(&result.effects)
                     ),
                 );
                 self.push_outgoing_message_with_id(
@@ -659,7 +669,7 @@ impl AppCore {
                     expires_at_secs,
                     delivery,
                 );
-                self.process_protocol_engine_effects(result.effects, &result.publish_registrations);
+                self.process_protocol_engine_effects(result.effects);
                 self.sync_message_delivery_trace(chat_id, &message_id);
                 self.reconcile_outgoing_message_delivery(chat_id, &message_id);
                 if !result.queued_targets.is_empty() {
@@ -877,7 +887,7 @@ impl AppCore {
 
     pub(super) fn reconcile_outgoing_message_delivery(&mut self, chat_id: &str, message_id: &str) {
         let pending_relay = self.pending_relay_publishes.values().any(|pending| {
-            pending.success_action_kind == PendingRelayPublishSuccessActionKind::MarkMessageSent
+            pending.success_action_kind == ProtocolPublishSuccessActionKind::MarkMessageSent
                 && pending.chat_id.as_deref() == Some(chat_id)
                 && pending.message_id.as_deref() == Some(message_id)
         });
@@ -1345,7 +1355,7 @@ impl AppCore {
             .map(|engine| engine.send_group_payload(&group_id, payload, inner_event_id.clone()));
         match result {
             Some(Ok(result)) => {
-                self.process_protocol_engine_effects(result.effects, &result.publish_registrations);
+                self.process_protocol_engine_effects(result.effects);
                 if !result.queued_targets.is_empty() {
                     self.request_protocol_subscription_refresh();
                     if self.fetch_recent_protocol_state() {
@@ -1411,10 +1421,7 @@ impl AppCore {
                 for group_event in group_outcome.events {
                     self.apply_group_decrypted_event(group_event);
                 }
-                self.process_protocol_engine_effects(
-                    group_outcome.effects,
-                    &group_outcome.publish_registrations,
-                );
+                self.process_protocol_engine_effects(group_outcome.effects);
                 self.request_protocol_subscription_refresh();
                 return;
             }
@@ -1425,10 +1432,7 @@ impl AppCore {
                         &group_outcome.queued_targets,
                     );
                 }
-                self.process_protocol_engine_effects(
-                    group_outcome.effects,
-                    &group_outcome.publish_registrations,
-                );
+                self.process_protocol_engine_effects(group_outcome.effects);
                 self.request_protocol_subscription_refresh();
                 return;
             }
@@ -1950,28 +1954,26 @@ pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMes
     }
 }
 
-fn summarize_group_send_effect_targets(registrations: &ProtocolPublishRegistrations) -> String {
+fn summarize_group_send_effect_targets(effects: &[ProtocolEffect]) -> String {
     let mut targets = Vec::new();
-    for (event_id, registration) in registrations {
-        let stage = if registration.target_owner_pubkey_hex.is_some()
-            || registration.target_device_id.is_some()
+    for effect in effects {
+        let ProtocolEffect::Publish(publish) = effect else {
+            continue;
+        };
+        let stage = if publish.target_owner_pubkey_hex.is_some()
+            || publish.target_device_id.is_some()
         {
             "targeted"
-        } else if registration.success_action_kind
-            == PendingRelayPublishSuccessActionKind::MarkMessageSent
-        {
+        } else if publish.success_action_kind == ProtocolPublishSuccessActionKind::MarkMessageSent {
             "mark_sent"
         } else {
             "signed"
         };
         targets.push(format!(
             "{stage}:{}/{}:{}",
-            registration
-                .target_owner_pubkey_hex
-                .as_deref()
-                .unwrap_or(""),
-            registration.target_device_id.as_deref().unwrap_or(""),
-            event_id
+            publish.target_owner_pubkey_hex.as_deref().unwrap_or(""),
+            publish.target_device_id.as_deref().unwrap_or(""),
+            publish.event.id
         ));
     }
     targets.join("|")
