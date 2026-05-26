@@ -9,24 +9,24 @@ fn protocol_effects_from_prepared(
     let target_owner_pubkey_hex = Some(public_owner(prepared.recipient_owner)?.to_hex());
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        bootstrap.push(ProtocolPublish::protocol(
+        bootstrap.push(ProtocolPublish {
             event,
-            None,
-            None,
-            target_owner_pubkey_hex.clone(),
-            None,
-        ));
+            chat_id: None,
+            inner_event_id: None,
+            target_owner_pubkey_hex: target_owner_pubkey_hex.clone(),
+            target_device_id: None,
+        });
     }
     for delivery in &prepared.deliveries {
         let event = message_event(&delivery.envelope)?;
         event_ids.push(event.id.to_string());
-        let publish = ProtocolPublish::protocol(
+        let publish = ProtocolPublish {
             event,
-            chat_id.clone(),
-            inner_event_id.clone(),
-            Some(public_owner(delivery.owner_pubkey)?.to_hex()),
-            Some(public_device(delivery.device_pubkey)?.to_hex()),
-        );
+            chat_id: chat_id.clone(),
+            inner_event_id: inner_event_id.clone(),
+            target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
+            target_device_id: Some(public_device(delivery.device_pubkey)?.to_hex()),
+        };
         payload.push(publish);
     }
     Ok(protocol_publish_effects(bootstrap, payload))
@@ -42,30 +42,36 @@ fn protocol_effects_from_group_prepared_publish(
     let mut payload = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        bootstrap.push(ProtocolPublish::protocol(
+        bootstrap.push(ProtocolPublish {
             event,
-            None,
-            None,
-            None,
-            None,
-        ));
+            chat_id: None,
+            inner_event_id: None,
+            target_owner_pubkey_hex: None,
+            target_device_id: None,
+        });
     }
     for delivery in &prepared.deliveries {
         let event = message_event(&delivery.envelope)?;
         event_ids.push(event.id.to_string());
-        let publish = ProtocolPublish::protocol(
+        let publish = ProtocolPublish {
             event,
-            chat_id.clone(),
-            inner_event_id.clone(),
-            Some(public_owner(delivery.owner_pubkey)?.to_hex()),
-            Some(public_device(delivery.device_pubkey)?.to_hex()),
-        );
+            chat_id: chat_id.clone(),
+            inner_event_id: inner_event_id.clone(),
+            target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
+            target_device_id: Some(public_device(delivery.device_pubkey)?.to_hex()),
+        };
         payload.push(publish);
     }
     for sender_key_message in &prepared.sender_key_messages {
         let event = group_sender_key_message_event(sender_key_message)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPublish::protocol(event, None, None, None, None));
+        payload.push(ProtocolPublish {
+            event,
+            chat_id: None,
+            inner_event_id: None,
+            target_owner_pubkey_hex: None,
+            target_device_id: None,
+        });
     }
     Ok(protocol_publish_effects(bootstrap, payload))
 }

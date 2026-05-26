@@ -49,24 +49,6 @@ pub struct ProtocolPublish {
     pub target_device_id: Option<String>,
 }
 
-impl ProtocolPublish {
-    fn protocol(
-        event: Event,
-        chat_id: Option<String>,
-        inner_event_id: Option<String>,
-        target_owner_pubkey_hex: Option<String>,
-        target_device_id: Option<String>,
-    ) -> Self {
-        Self {
-            event,
-            chat_id,
-            inner_event_id,
-            target_owner_pubkey_hex,
-            target_device_id,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum ProtocolEffect {
     Publish(ProtocolPublish),
