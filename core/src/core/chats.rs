@@ -697,10 +697,6 @@ impl AppCore {
         message_id: &str,
         target_owner_pubkey_hex: Option<&str>,
     ) {
-        let local_owner = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| logged_in.owner_pubkey.to_hex());
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
@@ -712,7 +708,6 @@ impl AppCore {
             return;
         };
         match target_owner_pubkey_hex {
-            Some(target_owner) if local_owner.as_deref() == Some(target_owner) => {}
             Some(target_owner) => {
                 if let Some(recipient) = message
                     .recipient_deliveries
@@ -884,7 +879,11 @@ impl AppCore {
             .as_ref()
             .map(|logged_in| logged_in.owner_pubkey.to_hex());
         let pending_relay = self.pending_relay_publishes.values().any(|pending| {
-            pending.blocks_remote_delivery_for(chat_id, message_id, local_owner.as_deref())
+            matches!(
+                pending.success_action(local_owner.as_deref()),
+                PendingRelayPublishSuccessAction::MarkMessageSent { message_ref, .. }
+                    if message_ref.chat_id == chat_id && message_ref.message_id == message_id
+            )
         });
         let queued_protocol = self
             .protocol_engine
