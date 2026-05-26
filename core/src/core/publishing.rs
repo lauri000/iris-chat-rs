@@ -25,32 +25,16 @@ impl AppCore {
         label: &'static str,
         completion: Option<(String, String)>,
     ) -> bool {
-        let (message_id, chat_id) = completion
-            .map(|(message_id, chat_id)| (Some(message_id), Some(chat_id)))
+        let (inner_event_id, chat_id) = completion
+            .map(|(inner_event_id, chat_id)| (Some(inner_event_id), Some(chat_id)))
             .unwrap_or((None, None));
-        let success_action_kind = if message_id.is_some() && chat_id.is_some() {
-            ProtocolPublishSuccessActionKind::MarkMessageSent
-        } else {
-            ProtocolPublishSuccessActionKind::None
-        };
-        self.publish_runtime_event_with_metadata(
-            event,
-            label,
-            success_action_kind,
-            message_id,
-            chat_id,
-            None,
-            None,
-            None,
-        )
+        self.publish_runtime_event_with_metadata(event, label, chat_id, inner_event_id, None, None)
     }
 
     pub(super) fn publish_protocol_event(&mut self, publish: ProtocolPublish) -> bool {
         self.publish_runtime_event_with_metadata(
             publish.event,
             APPCORE_PROTOCOL_LABEL,
-            publish.success_action_kind,
-            publish.message_id,
             publish.chat_id,
             publish.inner_event_id,
             publish.target_owner_pubkey_hex,
@@ -58,13 +42,10 @@ impl AppCore {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn publish_runtime_event_with_metadata(
         &mut self,
         event: Event,
         label: &'static str,
-        success_action_kind: ProtocolPublishSuccessActionKind,
-        message_id: Option<String>,
         chat_id: Option<String>,
         inner_event_id: Option<String>,
         target_owner_pubkey_hex: Option<String>,
@@ -83,8 +64,6 @@ impl AppCore {
         let stored = self.remember_pending_relay_publish(
             &event,
             label,
-            success_action_kind,
-            message_id,
             chat_id,
             inner_event_id,
             target_owner_pubkey_hex,
@@ -118,8 +97,6 @@ impl AppCore {
         &mut self,
         event: &Event,
         label: &str,
-        success_action_kind: ProtocolPublishSuccessActionKind,
-        message_id: Option<String>,
         chat_id: Option<String>,
         inner_event_id: Option<String>,
         target_owner_pubkey_hex: Option<String>,
@@ -137,12 +114,6 @@ impl AppCore {
             }
         };
         let pending = PendingRelayPublish {
-            success_action_kind: success_action_kind.for_pending_publish(
-                &owner_pubkey_hex,
-                chat_id.as_deref(),
-                message_id.as_deref(),
-                target_owner_pubkey_hex.as_deref(),
-            ),
             owner_pubkey_hex,
             event_id: event.id.to_string(),
             label: label.to_string(),
@@ -150,7 +121,6 @@ impl AppCore {
             inner_event_id,
             target_owner_pubkey_hex,
             target_device_id,
-            message_id,
             chat_id,
             created_at_secs: event.created_at.as_secs(),
             attempt_count: 0,
@@ -163,9 +133,10 @@ impl AppCore {
             self.push_debug_log("publish.runtime.queue", format!("store_failed={error}"));
             return false;
         }
-        if let (Some(message_id), Some(chat_id)) =
-            (pending.message_id.as_deref(), pending.chat_id.as_deref())
-        {
+        if let (Some(message_id), Some(chat_id)) = (
+            pending.inner_event_id.as_deref(),
+            pending.chat_id.as_deref(),
+        ) {
             self.record_message_outer_event(
                 chat_id,
                 message_id,
@@ -177,7 +148,7 @@ impl AppCore {
             .insert(pending.event_id.clone(), pending);
         if let Some(pending) = self.pending_relay_publishes.get(&event.id.to_string()) {
             if let (Some(message_id), Some(chat_id)) =
-                (pending.message_id.clone(), pending.chat_id.clone())
+                (pending.inner_event_id.clone(), pending.chat_id.clone())
             {
                 self.sync_message_delivery_trace(&chat_id, &message_id);
             }

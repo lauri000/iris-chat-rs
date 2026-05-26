@@ -792,7 +792,8 @@ impl AppCore {
                     .cloned()
                     .collect::<Vec<_>>()
                 {
-                    if let (Some(chat_id), Some(message_id)) = (pending.chat_id, pending.message_id)
+                    if let (Some(chat_id), Some(message_id)) =
+                        (pending.chat_id, pending.inner_event_id)
                     {
                         self.sync_message_delivery_trace(&chat_id, &message_id);
                     }

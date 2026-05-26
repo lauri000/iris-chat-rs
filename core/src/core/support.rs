@@ -76,7 +76,6 @@ impl AppCore {
                     inner_event_id: pending.inner_event_id.clone(),
                     target_owner_pubkey_hex: pending.target_owner_pubkey_hex.clone(),
                     target_device_id: pending.target_device_id.clone(),
-                    message_id: pending.message_id.clone(),
                     chat_id: pending.chat_id.clone(),
                     attempt_count: pending.attempt_count,
                     last_error: pending.last_error.clone(),

@@ -1,7 +1,6 @@
 fn protocol_effects_from_prepared(
     prepared: &PreparedSend,
     inner_event_id: Option<String>,
-    message_id: Option<String>,
     chat_id: Option<String>,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
@@ -12,9 +11,8 @@ fn protocol_effects_from_prepared(
         let event = invite_response_event(response)?;
         bootstrap.push(ProtocolPublish::protocol(
             event,
-            message_id.clone(),
-            chat_id.clone(),
-            inner_event_id.clone(),
+            None,
+            None,
             target_owner_pubkey_hex.clone(),
             None,
         ));
@@ -24,13 +22,11 @@ fn protocol_effects_from_prepared(
         event_ids.push(event.id.to_string());
         let publish = ProtocolPublish::protocol(
             event,
-            message_id.clone(),
             chat_id.clone(),
             inner_event_id.clone(),
             Some(public_owner(delivery.owner_pubkey)?.to_hex()),
             Some(public_device(delivery.device_pubkey)?.to_hex()),
-        )
-        .with_success_action_kind(ProtocolPublishSuccessActionKind::MarkMessageSent);
+        );
         payload.push(publish);
     }
     Ok(protocol_publish_effects(bootstrap, payload))
@@ -39,7 +35,6 @@ fn protocol_effects_from_prepared(
 fn protocol_effects_from_group_prepared_publish(
     prepared: &GroupPreparedPublish,
     inner_event_id: Option<String>,
-    message_id: Option<String>,
     chat_id: Option<String>,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
@@ -49,9 +44,8 @@ fn protocol_effects_from_group_prepared_publish(
         let event = invite_response_event(response)?;
         bootstrap.push(ProtocolPublish::protocol(
             event,
-            message_id.clone(),
-            chat_id.clone(),
-            inner_event_id.clone(),
+            None,
+            None,
             None,
             None,
         ));
@@ -61,19 +55,17 @@ fn protocol_effects_from_group_prepared_publish(
         event_ids.push(event.id.to_string());
         let publish = ProtocolPublish::protocol(
             event,
-            message_id.clone(),
             chat_id.clone(),
             inner_event_id.clone(),
             Some(public_owner(delivery.owner_pubkey)?.to_hex()),
             Some(public_device(delivery.device_pubkey)?.to_hex()),
-        )
-        .with_success_action_kind(ProtocolPublishSuccessActionKind::MarkMessageSent);
+        );
         payload.push(publish);
     }
     for sender_key_message in &prepared.sender_key_messages {
         let event = group_sender_key_message_event(sender_key_message)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPublish::protocol(event, None, None, None, None, None));
+        payload.push(ProtocolPublish::protocol(event, None, None, None, None));
     }
     Ok(protocol_publish_effects(bootstrap, payload))
 }
