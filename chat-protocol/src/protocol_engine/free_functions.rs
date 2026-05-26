@@ -4,15 +4,14 @@ fn protocol_effects_from_prepared(
     chat_id: String,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
-    let mut publishes = Vec::new();
+    let mut bootstrap = Vec::new();
+    let mut payload = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
         bootstrap.push(ProtocolPublish {
             event,
             chat_id: chat_id.clone(),
             inner_event_id: None,
-            target_owner_pubkey_hex: target_owner_pubkey_hex.clone(),
-            target_device_id: None,
         });
     }
     for delivery in &prepared.deliveries {
@@ -22,8 +21,6 @@ fn protocol_effects_from_prepared(
             event,
             chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
-            target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
-            target_device_id: Some(public_device(delivery.device_pubkey)?.to_hex()),
         };
         payload.push(publish);
     }
@@ -43,8 +40,6 @@ fn protocol_effects_from_group_prepared_publish(
             event,
             chat_id: chat_id.clone(),
             inner_event_id: None,
-            target_owner_pubkey_hex: None,
-            target_device_id: None,
         });
     }
     for delivery in &prepared.deliveries {
@@ -54,8 +49,6 @@ fn protocol_effects_from_group_prepared_publish(
             event,
             chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
-            target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
-            target_device_id: Some(public_device(delivery.device_pubkey)?.to_hex()),
         };
         payload.push(publish);
     }
@@ -65,9 +58,7 @@ fn protocol_effects_from_group_prepared_publish(
         payload.push(ProtocolPublish {
             event,
             chat_id: chat_id.clone(),
-            inner_event_id: None,
-            target_owner_pubkey_hex: None,
-            target_device_id: None,
+            inner_event_id: inner_event_id.clone(),
         });
     }
     Ok(protocol_publish_effects(bootstrap, payload))
@@ -86,6 +77,20 @@ fn protocol_publish_effects(
 
 fn protocol_publish_effect(publish: ProtocolPublish) -> ProtocolEffect {
     ProtocolEffect::Publish(publish)
+}
+
+fn classify_group_pairwise_payload(payload: &[u8]) -> anyhow::Result<(bool, bool)> {
+    let codec = JsonGroupPayloadCodecV1;
+    let Some(command) = codec.decode_pairwise_command(payload)? else {
+        return Ok((false, false));
+    };
+    let supported = match command {
+        GroupPairwiseCommand::MetadataSnapshot { snapshot } => snapshot.protocol.is_sender_key_v1(),
+        GroupPairwiseCommand::SenderKeyDistribution { .. }
+        | GroupPairwiseCommand::SenderKeyRepairRequest { .. } => true,
+        _ => false,
+    };
+    Ok((true, supported))
 }
 
 fn sort_dedup_protocol_pubkeys(pubkeys: &mut Vec<PublicKey>) {

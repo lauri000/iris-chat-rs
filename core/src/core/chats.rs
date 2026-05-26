@@ -625,42 +625,24 @@ impl AppCore {
                     .iter()
                     .filter(|effect| matches!(effect, ProtocolEffect::Publish(_)))
                     .count();
-                let targeted_effects = result
+                let delivery_publish_effects = result
                     .effects
                     .iter()
                     .filter(|effect| {
                         matches!(
                             effect,
-                            ProtocolEffect::Publish(publish)
-                                if publish.target_owner_pubkey_hex.is_some()
-                        )
-                    })
-                    .count();
-                let local_owner_hex = self
-                    .logged_in
-                    .as_ref()
-                    .map(|logged_in| logged_in.owner_pubkey.to_hex());
-                let mark_sent_effects = result
-                    .effects
-                    .iter()
-                    .filter(|effect| {
-                        matches!(
-                            effect,
-                            ProtocolEffect::Publish(publish)
-                                if publish.inner_event_id.is_some()
-                                    && publish.target_owner_pubkey_hex.as_deref() != local_owner_hex.as_deref()
+                            ProtocolEffect::Publish(publish) if publish.inner_event_id.is_some()
                         )
                     })
                     .count();
                 self.push_debug_log(
                     "message.group.send.appcore",
                     format!(
-                        "chat_id={chat_id} message_id={message_id} event_ids={} effects={} signed={} targeted={} mark_sent={} queued_targets={} targets={}",
+                        "chat_id={chat_id} message_id={message_id} event_ids={} effects={} signed={} delivery_publish={} queued_targets={} targets={}",
                         result.event_ids.len(),
                         result.effects.len(),
                         publish_effects,
-                        targeted_effects,
-                        mark_sent_effects,
+                        delivery_publish_effects,
                         result.queued_targets.len(),
                         summarize_group_send_effect_targets(&result.effects)
                     ),
@@ -708,56 +690,6 @@ impl AppCore {
                     ) {
                         recipient.delivery = DeliveryState::Sent;
                         recipient.updated_at_secs = unix_now().get();
-                    }
-                }
-            }
-        }
-    }
-
-    pub(super) fn mark_message_publish_succeeded(
-        &mut self,
-        chat_id: &str,
-        message_id: &str,
-        target_owner_pubkey_hex: Option<&str>,
-    ) {
-        let Some(thread) = self.threads.get_mut(chat_id) else {
-            return;
-        };
-        let Some(message) = thread
-            .messages
-            .iter_mut()
-            .find(|message| message.id == message_id)
-        else {
-            return;
-        };
-        match target_owner_pubkey_hex {
-            Some(target_owner) => {
-                if let Some(recipient) = message
-                    .recipient_deliveries
-                    .iter_mut()
-                    .find(|recipient| recipient.owner_pubkey_hex == target_owner)
-                {
-                    if matches!(
-                        recipient.delivery,
-                        DeliveryState::Pending | DeliveryState::Queued
-                    ) {
-                        recipient.delivery = DeliveryState::Sent;
-                        recipient.updated_at_secs = unix_now().get();
-                    }
-                }
-            }
-            None => {
-                if message.recipient_deliveries.is_empty() {
-                    message.delivery = DeliveryState::Sent;
-                } else {
-                    for recipient in &mut message.recipient_deliveries {
-                        if matches!(
-                            recipient.delivery,
-                            DeliveryState::Pending | DeliveryState::Queued
-                        ) {
-                            recipient.delivery = DeliveryState::Sent;
-                            recipient.updated_at_secs = unix_now().get();
-                        }
                     }
                 }
             }
@@ -891,16 +823,13 @@ impl AppCore {
 
     pub(super) fn reconcile_outgoing_message_delivery(&mut self, chat_id: &str, message_id: &str) {
         let pending_relay = self.pending_relay_publishes.values().any(|pending| {
-            pending.target_owner_pubkey_hex.as_deref() != Some(pending.owner_pubkey_hex.as_str())
-                && pending.chat_id.as_deref() == Some(chat_id)
+            pending.chat_id.as_deref() == Some(chat_id)
                 && pending.inner_event_id.as_deref() == Some(message_id)
         });
         let queued_protocol = self
             .protocol_engine
             .as_ref()
-            .is_some_and(|protocol_engine| {
-                protocol_engine.has_delivery_blocking_message_work(message_id)
-            });
+            .is_some_and(|protocol_engine| protocol_engine.has_queued_message_work(message_id));
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
@@ -935,31 +864,6 @@ impl AppCore {
                 recipient.delivery = DeliveryState::Sent;
                 recipient.updated_at_secs = now;
             }
-        }
-    }
-
-    pub(super) fn reconcile_ready_outgoing_message_deliveries(&mut self) {
-        let message_refs = self
-            .threads
-            .iter()
-            .flat_map(|(chat_id, thread)| {
-                thread.messages.iter().filter_map(|message| {
-                    if message.is_outgoing
-                        && matches!(
-                            message.delivery,
-                            DeliveryState::Pending | DeliveryState::Queued
-                        )
-                    {
-                        Some((chat_id.clone(), message.id.clone()))
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-
-        for (chat_id, message_id) in message_refs {
-            self.reconcile_outgoing_message_delivery(&chat_id, &message_id);
         }
     }
 
@@ -1964,20 +1868,12 @@ fn summarize_group_send_effect_targets(effects: &[ProtocolEffect]) -> String {
         let ProtocolEffect::Publish(publish) = effect else {
             continue;
         };
-        let stage =
-            if publish.target_owner_pubkey_hex.is_some() || publish.target_device_id.is_some() {
-                "targeted"
-            } else if publish.inner_event_id.is_some() {
-                "mark_sent"
-            } else {
-                "signed"
-            };
-        targets.push(format!(
-            "{stage}:{}/{}:{}",
-            publish.target_owner_pubkey_hex.as_deref().unwrap_or(""),
-            publish.target_device_id.as_deref().unwrap_or(""),
-            publish.event.id
-        ));
+        let stage = if publish.inner_event_id.is_some() {
+            "delivery"
+        } else {
+            "control"
+        };
+        targets.push(format!("{stage}:{}:{}", publish.chat_id, publish.event.id));
     }
     targets.join("|")
 }

@@ -585,15 +585,11 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
         event: bootstrap,
         chat_id: chat_id.clone(),
         inner_event_id: None,
-        target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
-        target_device_id: None,
     };
     let payload_publish = ProtocolPublish {
         event: payload,
         chat_id: chat_id.clone(),
         inner_event_id: Some(message_id.clone()),
-        target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
-        target_device_id: Some(peer.public_key().to_hex()),
     };
 
     core.process_protocol_engine_effects(vec![
@@ -653,8 +649,6 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
             label: "app-keys".to_string(),
             event_json: serde_json::to_string(&event).expect("event json"),
             inner_event_id: None,
-            target_owner_pubkey_hex: None,
-            target_device_id: None,
             chat_id: None,
             created_at_secs: event.created_at.as_secs(),
             attempt_count: 0,
@@ -746,8 +740,6 @@ fn failed_publish_drain_batches_results_and_schedules_one_retry() {
                 label: "test".to_string(),
                 event_json: serde_json::to_string(&event).expect("event json"),
                 inner_event_id: None,
-                target_owner_pubkey_hex: None,
-                target_device_id: None,
                 chat_id: None,
                 created_at_secs: event.created_at.as_secs(),
                 attempt_count: 0,
@@ -1083,15 +1075,11 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
         event: first,
         chat_id: chat_id.clone(),
         inner_event_id: Some(message_id.clone()),
-        target_owner_pubkey_hex: Some(chat_id.clone()),
-        target_device_id: Some(target_device_id.clone()),
     }));
     assert!(core.publish_protocol_event(ProtocolPublish {
         event: second,
         chat_id: chat_id.clone(),
         inner_event_id: Some(message_id),
-        target_owner_pubkey_hex: Some(chat_id),
-        target_device_id: Some(target_device_id),
     }));
 
     assert!(core.pending_relay_publishes.contains_key(&first_event_id));
@@ -2195,16 +2183,19 @@ fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
         )
         .expect("direct send");
 
-    let published_peer_targets = result
+    let message_publish_count = result
         .effects
         .iter()
-        .filter_map(|effect| match effect {
-            ProtocolEffect::Publish(publish) => publish.target_owner_pubkey_hex.clone(),
-            _ => None,
+        .filter(|effect| {
+            matches!(
+                effect,
+                ProtocolEffect::Publish(publish)
+                    if publish.inner_event_id.as_deref() == Some(result.message_id.as_str())
+            )
         })
-        .collect::<Vec<_>>();
-    assert!(
-        !published_peer_targets.contains(&peer_owner.public_key().to_hex()),
+        .count();
+    assert_eq!(
+        message_publish_count, 0,
         "peer owner must not be considered published before peer protocol state exists"
     );
     let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());

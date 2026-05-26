@@ -1621,9 +1621,7 @@ fn first_contact_receiver_bootstrap_fetches_preexisting_payload() {
             let event = serde_json::from_str::<Event>(&pending.event_json).ok()?;
             (event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
                 && pending.inner_event_id.is_some()
-                && pending.chat_id.is_some()
-                && pending.target_owner_pubkey_hex.as_deref()
-                    == Some(alice_owner.public_key().to_hex().as_str()))
+                && pending.chat_id.is_some())
             .then_some(event)
         })
         .expect("payload event");
@@ -2269,8 +2267,6 @@ fn queued_runtime_publish_registration_persists_inner_message_id() {
         event: outer_event,
         chat_id: chat_id.clone(),
         inner_event_id: Some(inner_message_id.clone()),
-        target_owner_pubkey_hex: Some(chat_id.clone()),
-        target_device_id: Some(peer.public_key().to_hex()),
     }));
     let pending = core
         .pending_relay_publishes

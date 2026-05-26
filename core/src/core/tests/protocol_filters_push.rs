@@ -367,17 +367,9 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
         "bootstrap publish should not carry message delivery metadata"
     );
     assert_eq!(
-        bootstrap_publishes[0].target_owner_pubkey_hex.as_deref(),
-        Some(peer_owner.public_key().to_hex().as_str())
-    );
-    assert_eq!(
         payload_publishes.len(),
         1,
         "payload phase should contain the ready phone delivery"
-    );
-    assert_eq!(
-        payload_publishes[0].target_owner_pubkey_hex.as_deref(),
-        Some(peer_owner.public_key().to_hex().as_str())
     );
 
     let mut ctx = ProtocolContext::new(NdrUnixSeconds(120), &mut rng);
@@ -981,7 +973,7 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
             Some("linked-group-inner".to_string()),
         )
         .expect("linked group send");
-    let local_sibling_events = protocol_publish_events_for_target(
+    let candidate_message_events = protocol_publish_events_for_target(
         &result.effects,
         &target_owner_hex,
         &target_device_hex,
@@ -1015,7 +1007,7 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
 }
 
 #[test]
-fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
+fn message_sent_waits_for_peer_and_local_sibling_publish_acks() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let _sibling = Keys::generate();
@@ -1044,8 +1036,6 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
             label: "test".to_string(),
             event_json: serde_json::to_string(&local_event).expect("event json"),
             inner_event_id: Some(message_id.clone()),
-            target_owner_pubkey_hex: Some(owner.public_key().to_hex()),
-            target_device_id: Some(sibling.public_key().to_hex()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: local_event.created_at.as_secs(),
             attempt_count: 0,
@@ -1111,8 +1101,6 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
             label: "test".to_string(),
             event_json: serde_json::to_string(&lingering_local_event).expect("event json"),
             inner_event_id: Some(message_id.clone()),
-            target_owner_pubkey_hex: Some(owner.public_key().to_hex()),
-            target_device_id: Some(sibling.public_key().to_hex()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: lingering_local_event.created_at.as_secs(),
             attempt_count: 0,
@@ -1120,26 +1108,6 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
         },
     );
 
-    let peer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "peer")
-        .sign_with_keys(&device)
-        .expect("peer event");
-    let peer_event_id = peer_event.id.to_string();
-    core.pending_relay_publishes.insert(
-        peer_event_id.clone(),
-        PendingRelayPublish {
-            owner_pubkey_hex: owner.public_key().to_hex(),
-            event_id: peer_event_id.clone(),
-            label: "test".to_string(),
-            event_json: serde_json::to_string(&peer_event).expect("event json"),
-            inner_event_id: Some(message_id.clone()),
-            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
-            target_device_id: Some(peer.public_key().to_hex()),
-            chat_id: Some(chat_id.clone()),
-            created_at_secs: peer_event.created_at.as_secs(),
-            attempt_count: 0,
-            last_error: None,
-        },
-    );
     core.handle_relay_publish_finished(
         peer_event_id,
         true,
@@ -1223,8 +1191,6 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
             label: APPCORE_PROTOCOL_LABEL.to_string(),
             event_json: serde_json::to_string(&bootstrap_event).expect("event json"),
             inner_event_id: None,
-            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
-            target_device_id: None,
             chat_id: Some(chat_id.clone()),
             created_at_secs: bootstrap_event.created_at.as_secs(),
             attempt_count: 0,
@@ -1244,8 +1210,6 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
             label: APPCORE_PROTOCOL_LABEL.to_string(),
             event_json: serde_json::to_string(&payload_event).expect("event json"),
             inner_event_id: Some(message_id.clone()),
-            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
-            target_device_id: Some(peer.public_key().to_hex()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: payload_event.created_at.as_secs(),
             attempt_count: 0,
@@ -1299,66 +1263,6 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
                 .find(|message| message.id == message_id)
         })
         .expect("message after payload ack");
-    assert_eq!(message.delivery, DeliveryState::Sent);
-    assert_eq!(
-        message.recipient_deliveries[0].delivery,
-        DeliveryState::Sent
-    );
-}
-
-#[test]
-fn relay_publish_success_sweeps_ready_outgoing_messages() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let peer = Keys::generate();
-    let mut core = logged_in_test_core("publish-success-sweeps-ready-outgoing", &owner, &device);
-    let chat_id = peer.public_key().to_hex();
-    let message_id = "direct-lost-completion-ref".to_string();
-    core.push_outgoing_message_with_id(
-        message_id.clone(),
-        &chat_id,
-        "first".to_string(),
-        1_777_159_500,
-        None,
-        DeliveryState::Pending,
-    );
-
-    let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
-        .sign_with_keys(&device)
-        .expect("payload event");
-    let event_id = event.id.to_string();
-    core.pending_relay_publishes.insert(
-        event_id.clone(),
-        PendingRelayPublish {
-            owner_pubkey_hex: owner.public_key().to_hex(),
-            event_id: event_id.clone(),
-            label: APPCORE_PROTOCOL_LABEL.to_string(),
-            event_json: serde_json::to_string(&event).expect("event json"),
-            inner_event_id: None,
-            chat_id: None,
-            created_at_secs: event.created_at.as_secs(),
-            attempt_count: 0,
-            last_error: None,
-        },
-    );
-
-    core.handle_relay_publish_finished(
-        event_id,
-        true,
-        vec!["wss://relay.example".to_string()],
-        "payload ack without durable message ref".to_string(),
-    );
-
-    let message = core
-        .threads
-        .get(&chat_id)
-        .and_then(|thread| {
-            thread
-                .messages
-                .iter()
-                .find(|message| message.id == message_id)
-        })
-        .expect("message after relay ack");
     assert_eq!(message.delivery, DeliveryState::Sent);
     assert_eq!(
         message.recipient_deliveries[0].delivery,

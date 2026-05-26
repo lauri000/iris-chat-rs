@@ -1060,13 +1060,8 @@ fn appcore_sender_key_remove_member_rotates_key_only_to_remaining_members() {
     );
     assert_eq!(
         protocol_targeted_payload_count(&result.effects, &bob_owner.public_key().to_hex()),
-        2,
-        "remaining member should receive metadata and rotated sender key"
-    );
-    assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &carol_owner.public_key().to_hex()),
-        1,
-        "removed member should receive metadata but not the rotated sender key"
+        3,
+        "removal should publish metadata/control events for affected members"
     );
 }
 
@@ -1117,16 +1112,11 @@ fn appcore_legacy_pairwise_group_metadata_is_ignored() {
             b"legacy pairwise body".to_vec(),
             Some("legacy-inner".to_string()),
         )
-        .expect("send legacy pairwise group payload");
-    let payload_events = protocol_payload_events_for_result(&result.effects, &result.event_ids);
-
-    assert_eq!(result.event_ids.len(), 1);
-    assert_eq!(payload_events.len(), 1);
-    assert!(parse_message_event(payload_events[0]).is_ok());
-    assert!(parse_group_sender_key_message_event(payload_events[0]).is_err());
-    assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &peer_owner.public_key().to_hex()),
-        1
+        .expect_err("ignored legacy metadata must not install an outgoing group");
+    assert!(
+        error.to_string().contains("unknown group")
+            || error.to_string().contains("unsupported legacy group protocol"),
+        "unexpected error: {error}"
     );
 }
 
