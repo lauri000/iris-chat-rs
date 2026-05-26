@@ -1023,7 +1023,47 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
 }
 
 #[test]
-fn message_sent_waits_for_peer_and_local_sibling_publish_acks() {
+fn pending_relay_publish_success_action_ignores_local_device_targets() {
+    let local_owner = "local-owner".to_string();
+    let peer_owner = "peer-owner".to_string();
+    let pending = |label: &str, target_owner_pubkey_hex: Option<String>| PendingRelayPublish {
+        owner_pubkey_hex: local_owner.clone(),
+        event_id: format!("{label}-event"),
+        label: label.to_string(),
+        event_json: "{}".to_string(),
+        inner_event_id: Some("inner".to_string()),
+        target_owner_pubkey_hex,
+        target_device_id: Some("device".to_string()),
+        message_id: Some("message-1".to_string()),
+        chat_id: Some("chat-1".to_string()),
+        created_at_secs: 1,
+        attempt_count: 0,
+        last_error: None,
+    };
+
+    assert_eq!(
+        pending("test", Some(local_owner.clone())).success_action(Some(local_owner.as_str())),
+        PendingRelayPublishSuccessAction::None
+    );
+    assert_eq!(
+        pending(APPCORE_PROTOCOL_BOOTSTRAP_LABEL, Some(local_owner.clone()))
+            .success_action(Some(local_owner.as_str())),
+        PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads
+    );
+    assert_eq!(
+        pending("test", Some(peer_owner.clone())).success_action(Some(local_owner.as_str())),
+        PendingRelayPublishSuccessAction::MarkMessageSent {
+            message_ref: PendingRelayPublishMessageRef {
+                chat_id: "chat-1".to_string(),
+                message_id: "message-1".to_string(),
+            },
+            target_owner_pubkey_hex: Some(peer_owner),
+        }
+    );
+}
+
+#[test]
+fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let _sibling = Keys::generate();

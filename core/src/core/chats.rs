@@ -700,6 +700,56 @@ impl AppCore {
         }
     }
 
+    pub(super) fn mark_message_publish_succeeded(
+        &mut self,
+        chat_id: &str,
+        message_id: &str,
+        target_owner_pubkey_hex: Option<&str>,
+    ) {
+        let Some(thread) = self.threads.get_mut(chat_id) else {
+            return;
+        };
+        let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.id == message_id)
+        else {
+            return;
+        };
+        match target_owner_pubkey_hex {
+            Some(target_owner) => {
+                if let Some(recipient) = message
+                    .recipient_deliveries
+                    .iter_mut()
+                    .find(|recipient| recipient.owner_pubkey_hex == target_owner)
+                {
+                    if matches!(
+                        recipient.delivery,
+                        DeliveryState::Pending | DeliveryState::Queued
+                    ) {
+                        recipient.delivery = DeliveryState::Sent;
+                        recipient.updated_at_secs = unix_now().get();
+                    }
+                }
+            }
+            None => {
+                if message.recipient_deliveries.is_empty() {
+                    message.delivery = DeliveryState::Sent;
+                } else {
+                    for recipient in &mut message.recipient_deliveries {
+                        if matches!(
+                            recipient.delivery,
+                            DeliveryState::Pending | DeliveryState::Queued
+                        ) {
+                            recipient.delivery = DeliveryState::Sent;
+                            recipient.updated_at_secs = unix_now().get();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn record_message_outer_event(
         &mut self,
         chat_id: &str,
@@ -827,7 +877,11 @@ impl AppCore {
 
     pub(super) fn reconcile_outgoing_message_delivery(&mut self, chat_id: &str, message_id: &str) {
         let pending_relay = self.pending_relay_publishes.values().any(|pending| {
-            pending.blocks_remote_delivery_for(chat_id, message_id, local_owner.as_deref())
+            matches!(
+                pending.success_action(local_owner.as_deref()),
+                PendingRelayPublishSuccessAction::MarkMessageSent { message_ref, .. }
+                    if message_ref.chat_id == chat_id && message_ref.message_id == message_id
+            )
         });
         let queued_protocol = self
             .protocol_engine

@@ -215,9 +215,15 @@ impl PendingRelayPublish {
         })
     }
 
-    pub(super) fn success_action(&self) -> PendingRelayPublishSuccessAction {
+    pub(super) fn success_action(
+        &self,
+        local_owner_pubkey_hex: Option<&str>,
+    ) -> PendingRelayPublishSuccessAction {
         if self.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL {
             return PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads;
+        }
+        if self.target_owner_pubkey_hex.as_deref() == local_owner_pubkey_hex {
+            return PendingRelayPublishSuccessAction::None;
         }
         self.message_ref()
             .map(
@@ -227,17 +233,6 @@ impl PendingRelayPublish {
                 },
             )
             .unwrap_or(PendingRelayPublishSuccessAction::None)
-    }
-
-    pub(super) fn blocks_remote_delivery_for(
-        &self,
-        chat_id: &str,
-        message_id: &str,
-        local_owner_pubkey_hex: Option<&str>,
-    ) -> bool {
-        self.chat_id.as_deref() == Some(chat_id)
-            && self.message_id.as_deref() == Some(message_id)
-            && self.target_owner_pubkey_hex.as_deref() != local_owner_pubkey_hex
     }
 
     pub(super) fn delays_first_contact_payload(&self) -> bool {

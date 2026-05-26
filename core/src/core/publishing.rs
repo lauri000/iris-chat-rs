@@ -532,9 +532,13 @@ impl AppCore {
         self.pending_relay_publish_inflight.remove(&event_id);
         self.push_debug_log("publish.runtime", detail.clone());
         let pending = self.pending_relay_publishes.get(&event_id).cloned();
+        let local_owner = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex());
         let success_action = pending
             .as_ref()
-            .map(PendingRelayPublish::success_action)
+            .map(|pending| pending.success_action(local_owner.as_deref()))
             .unwrap_or(PendingRelayPublishSuccessAction::None);
         let message_ref = pending.as_ref().and_then(PendingRelayPublish::message_ref);
         let mut should_retry = false;
