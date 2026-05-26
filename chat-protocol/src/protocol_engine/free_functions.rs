@@ -30,15 +30,12 @@ fn protocol_effects_from_prepared(
                 inner_event_id.clone(),
                 Some(public_owner(delivery.owner_pubkey)?.to_hex()),
                 Some(public_device(delivery.device_pubkey)?.to_hex()),
-            ),
+            )
+            .with_success_action_kind(PendingRelayPublishSuccessActionKind::MarkMessageSent),
             event,
         });
     }
-    Ok(protocol_publish_effects(
-        bootstrap,
-        payload,
-        publish_registrations,
-    ))
+    Ok(protocol_publish_effects(bootstrap, payload, publish_registrations))
 }
 
 fn protocol_effects_from_group_prepared_publish(
@@ -73,7 +70,8 @@ fn protocol_effects_from_group_prepared_publish(
                 inner_event_id.clone(),
                 Some(public_owner(delivery.owner_pubkey)?.to_hex()),
                 Some(public_device(delivery.device_pubkey)?.to_hex()),
-            ),
+            )
+            .with_success_action_kind(PendingRelayPublishSuccessActionKind::MarkMessageSent),
             event,
         });
     }
@@ -85,11 +83,7 @@ fn protocol_effects_from_group_prepared_publish(
             event,
         });
     }
-    Ok(protocol_publish_effects(
-        bootstrap,
-        payload,
-        publish_registrations,
-    ))
+    Ok(protocol_publish_effects(bootstrap, payload, publish_registrations))
 }
 
 fn protocol_publish_effects(
@@ -97,47 +91,19 @@ fn protocol_publish_effects(
     payload: Vec<ProtocolPreparedPublish>,
     publish_registrations: &mut ProtocolPublishRegistrations,
 ) -> Vec<ProtocolEffect> {
-    if bootstrap.is_empty() {
-        return payload
-            .into_iter()
-            .map(|publish| {
-                protocol_publish_effect(publish, APPCORE_PROTOCOL_LABEL, publish_registrations)
-            })
-            .collect();
-    }
-    if payload.is_empty() {
-        return bootstrap
-            .into_iter()
-            .map(|publish| {
-                protocol_publish_effect(publish, APPCORE_PROTOCOL_LABEL, publish_registrations)
-            })
-            .collect();
-    }
     let mut effects = Vec::with_capacity(bootstrap.len() + payload.len());
-    for publish in bootstrap {
-        effects.push(protocol_publish_effect(
-            publish,
-            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
-            publish_registrations,
-        ));
-    }
-    for publish in payload {
-        effects.push(protocol_publish_effect(
-            publish,
-            APPCORE_PROTOCOL_FIRST_CONTACT_LABEL,
-            publish_registrations,
-        ));
+    for publish in bootstrap.into_iter().chain(payload) {
+        effects.push(protocol_publish_effect(publish, publish_registrations));
     }
     effects
 }
 
 fn protocol_publish_effect(
     publish: ProtocolPreparedPublish,
-    label: &'static str,
     publish_registrations: &mut ProtocolPublishRegistrations,
 ) -> ProtocolEffect {
     let event_id = publish.event.id.to_string();
-    publish_registrations.insert(event_id, publish.registration.with_label(label));
+    publish_registrations.insert(event_id, publish.registration);
     ProtocolEffect::Publish(publish.event)
 }
 

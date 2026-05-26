@@ -586,7 +586,8 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
         (
             bootstrap_id,
             ProtocolPublishRegistration {
-                label: APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+                label: APPCORE_PROTOCOL_LABEL,
+                success_action_kind: PendingRelayPublishSuccessActionKind::None,
                 message_id: Some(message_id.clone()),
                 chat_id: Some(chat_id.clone()),
                 inner_event_id: Some(message_id.clone()),
@@ -597,7 +598,8 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
         (
             payload_id.clone(),
             ProtocolPublishRegistration {
-                label: APPCORE_PROTOCOL_FIRST_CONTACT_LABEL,
+                label: APPCORE_PROTOCOL_LABEL,
+                success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
                 message_id: Some(message_id.clone()),
                 chat_id: Some(chat_id.clone()),
                 inner_event_id: Some(message_id.clone()),
@@ -617,14 +619,18 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
         .get(&payload_id)
         .expect("payload should be queued");
     assert_eq!(pending.label, APPCORE_PROTOCOL_LABEL);
-    assert_eq!(pending.inner_event_id.as_deref(), Some(message_id.as_str()));
+    assert_eq!(
+        pending.success_action_kind,
+        PendingRelayPublishSuccessActionKind::MarkMessageSent
+    );
+    assert_eq!(pending.message_id.as_deref(), Some(message_id.as_str()));
     assert_eq!(pending.chat_id.as_deref(), Some(chat_id.as_str()));
     assert!(
         core.pending_relay_publishes
             .values()
-            .any(|pending| pending.inner_event_id.is_none()
-                && pending.chat_id.as_deref() == Some(chat_id.as_str())),
-        "bootstrap should be durable with chat context but without message delivery metadata"
+            .any(|pending| pending.success_action_kind == PendingRelayPublishSuccessActionKind::None
+                && pending.message_id.as_deref() == Some(message_id.as_str())),
+        "bootstrap should be durable with no publish-success action"
     );
 }
 
@@ -1092,6 +1098,7 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
         first,
         ProtocolPublishRegistration {
             label: APPCORE_PROTOCOL_LABEL,
+            success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
             message_id: Some(message_id.clone()),
             chat_id: Some(chat_id.clone()),
             inner_event_id: Some("inner-message".to_string()),
@@ -1103,6 +1110,7 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
         second,
         ProtocolPublishRegistration {
             label: APPCORE_PROTOCOL_LABEL,
+            success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
             message_id: Some(message_id),
             chat_id: Some(chat_id.clone()),
             inner_event_id: Some("inner-message".to_string()),

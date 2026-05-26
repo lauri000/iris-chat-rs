@@ -37,6 +37,11 @@ impl AppCore {
             event,
             ProtocolPublishRegistration {
                 label,
+                success_action_kind: if message_id.is_some() && chat_id.is_some() {
+                    PendingRelayPublishSuccessActionKind::MarkMessageSent
+                } else {
+                    PendingRelayPublishSuccessActionKind::None
+                },
                 message_id,
                 chat_id,
                 inner_event_id: None,
@@ -87,23 +92,6 @@ impl AppCore {
         true
     }
 
-    pub(super) fn queue_runtime_event_for_delayed_publish(
-        &mut self,
-        event: Event,
-        registration: ProtocolPublishRegistration,
-    ) -> bool {
-        if self.defer_owner_app_keys_publish && is_app_keys_event(&event) {
-            self.push_debug_log(
-                "publish.runtime",
-                "label=runtime skipped=defer_owner_app_keys".to_string(),
-            );
-            return false;
-        }
-        self.remember_event(event.id.to_string());
-        self.emit_nearby_published_event(&event);
-        self.remember_pending_relay_publish(&event, registration)
-    }
-
     fn remember_pending_relay_publish(
         &mut self,
         event: &Event,
@@ -121,9 +109,8 @@ impl AppCore {
             }
         };
         let pending = PendingRelayPublish {
-            success_action_kind: PendingRelayPublishSuccessActionKind::from_publish_metadata(
+            success_action_kind: registration.success_action_kind.for_pending_publish(
                 &owner_pubkey_hex,
-                registration.label,
                 registration.chat_id.as_deref(),
                 registration.message_id.as_deref(),
                 registration.target_owner_pubkey_hex.as_deref(),
@@ -558,8 +545,7 @@ impl AppCore {
                         target_owner_pubkey_hex.as_deref(),
                     );
                 }
-                PendingRelayPublishSuccessAction::None
-                | PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads => {}
+                PendingRelayPublishSuccessAction::None => {}
             }
         } else if let Some(pending) = self.pending_relay_publishes.get_mut(&event_id) {
             if pending.last_error.as_deref() != Some(PENDING_RELAY_PUBLISH_IN_PROGRESS) {
@@ -589,30 +575,10 @@ impl AppCore {
             self.sync_message_delivery_trace(&message_ref.chat_id, &message_ref.message_id);
             self.reconcile_outgoing_message_delivery(&message_ref.chat_id, &message_ref.message_id);
         }
-        if success
-            && matches!(
-                success_action,
-                PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads
-            )
-        {
-            self.schedule_first_contact_payload_publish();
-        }
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
         should_retry
-    }
-
-    pub(super) fn should_delay_first_contact_payload_publish(
-        &self,
-        pending: &PendingRelayPublish,
-    ) -> bool {
-        if !pending.delays_first_contact_payload() {
-            return false;
-        }
-        self.pending_relay_publishes
-            .values()
-            .any(|candidate| candidate.matches_first_contact_bootstrap(pending))
     }
 
     fn forget_pending_relay_publish(&mut self, event_id: &str) {

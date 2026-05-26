@@ -199,15 +199,6 @@ pub(super) struct PendingRelayPublishMessageRef {
     pub(super) message_id: String,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum PendingRelayPublishSuccessActionKind {
-    #[default]
-    None,
-    MarkMessageSent,
-    ReleaseFirstContactPayloads,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum PendingRelayPublishSuccessAction {
     None,
@@ -215,44 +206,6 @@ pub(super) enum PendingRelayPublishSuccessAction {
         message_ref: PendingRelayPublishMessageRef,
         target_owner_pubkey_hex: Option<String>,
     },
-    ReleaseFirstContactPayloads,
-}
-
-impl PendingRelayPublishSuccessActionKind {
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::MarkMessageSent => "mark_message_sent",
-            Self::ReleaseFirstContactPayloads => "release_first_contact_payloads",
-        }
-    }
-
-    pub(super) fn from_storage(value: &str) -> Self {
-        match value {
-            "mark_message_sent" => Self::MarkMessageSent,
-            "release_first_contact_payloads" => Self::ReleaseFirstContactPayloads,
-            _ => Self::None,
-        }
-    }
-
-    pub(super) fn from_publish_metadata(
-        owner_pubkey_hex: &str,
-        label: &str,
-        chat_id: Option<&str>,
-        message_id: Option<&str>,
-        target_owner_pubkey_hex: Option<&str>,
-    ) -> Self {
-        if label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL {
-            return Self::ReleaseFirstContactPayloads;
-        }
-        if target_owner_pubkey_hex == Some(owner_pubkey_hex) {
-            return Self::None;
-        }
-        if chat_id.is_some() && message_id.is_some() {
-            return Self::MarkMessageSent;
-        }
-        Self::None
-    }
 }
 
 impl PendingRelayPublish {
@@ -275,23 +228,7 @@ impl PendingRelayPublish {
                     },
                 )
                 .unwrap_or(PendingRelayPublishSuccessAction::None),
-            PendingRelayPublishSuccessActionKind::ReleaseFirstContactPayloads => {
-                PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads
-            }
         }
-    }
-
-    pub(super) fn delays_first_contact_payload(&self) -> bool {
-        self.label == APPCORE_PROTOCOL_FIRST_CONTACT_LABEL
-    }
-
-    pub(super) fn matches_first_contact_bootstrap(&self, payload: &PendingRelayPublish) -> bool {
-        self.event_id != payload.event_id
-            && self.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL
-            && self.message_id == payload.message_id
-            && self.chat_id == payload.chat_id
-            && (self.target_owner_pubkey_hex.is_none()
-                || self.target_owner_pubkey_hex == payload.target_owner_pubkey_hex)
     }
 }
 
