@@ -1271,6 +1271,66 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
 }
 
 #[test]
+fn relay_publish_success_sweeps_ready_outgoing_messages() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("publish-success-sweeps-ready-outgoing", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "direct-lost-completion-ref".to_string();
+    core.push_outgoing_message_with_id(
+        message_id.clone(),
+        &chat_id,
+        "first".to_string(),
+        1_777_159_500,
+        None,
+        DeliveryState::Pending,
+    );
+
+    let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
+        .sign_with_keys(&device)
+        .expect("payload event");
+    let event_id = event.id.to_string();
+    core.pending_relay_publishes.insert(
+        event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: event_id.clone(),
+            label: APPCORE_PROTOCOL_LABEL.to_string(),
+            event_json: serde_json::to_string(&event).expect("event json"),
+            inner_event_id: None,
+            chat_id: None,
+            created_at_secs: event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        },
+    );
+
+    core.handle_relay_publish_finished(
+        event_id,
+        true,
+        vec!["wss://relay.example".to_string()],
+        "payload ack without durable message ref".to_string(),
+    );
+
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("message after relay ack");
+    assert_eq!(message.delivery, DeliveryState::Sent);
+    assert_eq!(
+        message.recipient_deliveries[0].delivery,
+        DeliveryState::Sent
+    );
+}
+
+#[test]
 fn sender_key_group_payload_publish_ack_marks_sent_after_outer_success() {
     let owner = Keys::generate();
     let device = Keys::generate();

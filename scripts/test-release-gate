@@ -161,22 +161,12 @@ run_core_package_check() {
   local protocol_name protocol_version
   protocol_name="$(crate_manifest_field "${ROOT_DIR}/chat-protocol/Cargo.toml" name)"
   protocol_version="$(crate_manifest_field "${ROOT_DIR}/chat-protocol/Cargo.toml" version)"
-  set +e
-  crates_io_has_version "$protocol_name" "$protocol_version"
-  local lookup_status=$?
-  set -e
-  case "$lookup_status" in
-    0)
-      cargo package --manifest-path "${ROOT_DIR}/core/Cargo.toml" --locked --allow-dirty
-      ;;
-    1)
-      echo "Skipping core cargo package verification because ${protocol_name} ${protocol_version} is not on crates.io yet."
-      echo "The release script publishes ${protocol_name} first, then publishes core."
-      ;;
-    *)
-      return "$lookup_status"
-      ;;
-  esac
+  if crates_io_has_version "$protocol_name" "$protocol_version"; then
+    cargo package --manifest-path "${ROOT_DIR}/core/Cargo.toml" --locked --allow-dirty
+    return
+  fi
+  echo "Skipping core cargo package verification because ${protocol_name} ${protocol_version} is not on crates.io yet."
+  echo "The release script publishes ${protocol_name} first, then publishes core."
 }
 
 echo "iris chat release gate (${MODE})"
