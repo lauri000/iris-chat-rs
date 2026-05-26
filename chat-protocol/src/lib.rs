@@ -6,15 +6,17 @@ use nostr::{Event, Filter, Keys, Kind, PublicKey, Timestamp};
 use nostr_double_ratchet::{
     sender_key_repair_default_next_retry_at, AuthorizedDevice, DevicePubkey as NdrDevicePubkey,
     DeviceRoster, DomainError, Error as NdrError, GroupIncomingEvent, GroupManagerSnapshot,
-    GroupPendingFanout, GroupPreparedPublish, GroupPreparedSend, GroupProtocol,
-    GroupSenderKeyHandleResult, GroupSenderKeyMessage, GroupSnapshot, Invite, MessageEnvelope,
-    OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext, RelayGap, SenderKeyRepairRequest,
-    SessionManager, SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
+    GroupPairwiseCommand, GroupPayloadCodec, GroupPendingFanout, GroupPreparedPublish,
+    GroupPreparedSend, GroupProtocol, GroupSenderKeyHandleResult, GroupSenderKeyMessage,
+    GroupSnapshot, Invite, MessageEnvelope, OwnerPubkey as NdrOwnerPubkey, PreparedSend,
+    ProtocolContext, RelayGap, SenderKeyRepairRequest, SessionManager, SessionManagerSnapshot,
+    SessionState, UnixSeconds as NdrUnixSeconds,
 };
 use nostr_double_ratchet_nostr::{
     group_sender_key_message_event, invite_response_event, message_event,
     parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,
-    parse_invite_event, parse_invite_response_event, parse_message_event, NostrGroupManager,
+    parse_invite_event, parse_invite_response_event, parse_message_event, JsonGroupPayloadCodecV1,
+    NostrGroupManager,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use rand::rngs::OsRng;

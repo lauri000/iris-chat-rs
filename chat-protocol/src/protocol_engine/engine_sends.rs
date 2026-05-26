@@ -249,12 +249,24 @@ impl ProtocolEngine {
         })
     }
 
+    fn ensure_supported_group_protocol(&self, group_id: &str) -> anyhow::Result<()> {
+        if self
+            .group_manager
+            .group(group_id)
+            .is_some_and(|group| !group.protocol.is_sender_key_v1())
+        {
+            anyhow::bail!("group `{group_id}` uses an unsupported legacy group protocol");
+        }
+        Ok(())
+    }
+
     pub fn update_group_name(
         &mut self,
         group_id: &str,
         name: String,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.update_name(
@@ -276,6 +288,7 @@ impl ProtocolEngine {
         picture: Option<String>,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.update_picture(
@@ -297,6 +310,7 @@ impl ProtocolEngine {
         about: Option<String>,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.update_about(
@@ -318,6 +332,7 @@ impl ProtocolEngine {
         members: Vec<PublicKey>,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.add_members(
@@ -339,6 +354,7 @@ impl ProtocolEngine {
         member: PublicKey,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.remove_members(
@@ -361,6 +377,7 @@ impl ProtocolEngine {
         is_admin: bool,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = if is_admin {
@@ -392,6 +409,7 @@ impl ProtocolEngine {
         inner_event_id: Option<String>,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
         self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
             let prepared = engine.group_manager.send_message(

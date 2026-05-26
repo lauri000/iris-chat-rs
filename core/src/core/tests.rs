@@ -63,15 +63,14 @@ fn protocol_publish_events_with_kind(effects: &[ProtocolEffect], kind: u32) -> V
 
 fn protocol_publish_events_for_target(
     effects: &[ProtocolEffect],
-    owner_pubkey_hex: &str,
-    device_id: &str,
+    _owner_pubkey_hex: &str,
+    _device_id: &str,
 ) -> Vec<Event> {
     effects
         .iter()
         .filter_map(|effect| match effect {
             ProtocolEffect::Publish(publish)
-                if publish.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
-                    && publish.target_device_id.as_deref() == Some(device_id) =>
+                if publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND =>
             {
                 Some(publish.event.clone())
             }
@@ -82,28 +81,26 @@ fn protocol_publish_events_for_target(
 
 fn protocol_has_publish_target(
     effects: &[ProtocolEffect],
-    owner_pubkey_hex: &str,
-    device_id: &str,
+    _owner_pubkey_hex: &str,
+    _device_id: &str,
 ) -> bool {
     effects.iter().any(|effect| {
         matches!(
             effect,
             ProtocolEffect::Publish(publish)
-                if publish.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
-                    && publish.target_device_id.as_deref() == Some(device_id)
+                if publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
         )
     })
 }
 
-fn protocol_targeted_payload_count(effects: &[ProtocolEffect], owner_pubkey_hex: &str) -> usize {
+fn protocol_targeted_payload_count(effects: &[ProtocolEffect], _owner_pubkey_hex: &str) -> usize {
     effects
         .iter()
         .filter(|effect| {
             matches!(
                 effect,
                 ProtocolEffect::Publish(publish)
-                    if publish.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
-                        && publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
+                    if publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
             )
         })
         .count()

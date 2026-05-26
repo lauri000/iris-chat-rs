@@ -81,7 +81,14 @@ impl ProtocolEngine {
         from_owner_pubkey: PublicKey,
         from_sender_device_pubkey: Option<PublicKey>,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        let is_group_payload = self.group_manager.is_pairwise_payload(payload);
+        let (is_group_payload, is_supported_group_payload) =
+            classify_group_pairwise_payload(payload).unwrap_or((false, false));
+        if is_group_payload && !is_supported_group_payload {
+            return Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                ..Default::default()
+            });
+        }
         let sender_device = from_sender_device_pubkey.map(ndr_device);
         let sender_owner = ndr_owner(from_owner_pubkey);
         let sender_owner =
@@ -93,7 +100,7 @@ impl ProtocolEngine {
                     claimed_owner,
                     sender_device,
                 } => {
-                    if is_group_payload {
+                    if is_supported_group_payload {
                         let queued_targets = vec![format!("owner:{}", claimed_owner.to_hex())];
                         let effects = self.protocol_backfill_effects_for_targets(
                             &queued_targets,
@@ -176,7 +183,7 @@ impl ProtocolEngine {
                 ..Default::default()
             }),
             Err(error) => {
-                if is_group_payload {
+                if is_supported_group_payload {
                     self.queue_pending_group_pairwise_payload(
                         sender_owner,
                         sender_device,
@@ -511,6 +518,12 @@ impl ProtocolEngine {
         for mut pending in pairwise {
             if pending.next_retry_at_secs > now.get() {
                 still_pairwise.push(pending);
+                continue;
+            }
+            let (_, is_supported_group_payload) =
+                classify_group_pairwise_payload(&pending.payload).unwrap_or((false, false));
+            if !is_supported_group_payload {
+                persist_needed = true;
                 continue;
             }
             let sender_resolution = self

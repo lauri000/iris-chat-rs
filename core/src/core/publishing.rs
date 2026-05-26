@@ -28,7 +28,7 @@ impl AppCore {
         let (inner_event_id, chat_id) = completion
             .map(|(inner_event_id, chat_id)| (Some(inner_event_id), Some(chat_id)))
             .unwrap_or((None, None));
-        self.publish_runtime_event_with_metadata(event, label, chat_id, inner_event_id, None, None)
+        self.publish_runtime_event_with_metadata(event, label, chat_id, inner_event_id)
     }
 
     pub(super) fn publish_protocol_event(&mut self, publish: ProtocolPublish) -> bool {
@@ -37,8 +37,6 @@ impl AppCore {
             APPCORE_PROTOCOL_LABEL,
             Some(publish.chat_id),
             publish.inner_event_id,
-            publish.target_owner_pubkey_hex,
-            publish.target_device_id,
         )
     }
 
@@ -48,8 +46,6 @@ impl AppCore {
         label: &'static str,
         chat_id: Option<String>,
         inner_event_id: Option<String>,
-        target_owner_pubkey_hex: Option<String>,
-        target_device_id: Option<String>,
     ) -> bool {
         if self.defer_owner_app_keys_publish && is_app_keys_event(&event) {
             self.push_debug_log(
@@ -61,14 +57,7 @@ impl AppCore {
         self.remember_event(event.id.to_string());
         self.emit_nearby_published_event(&event);
         let event_id = event.id.to_string();
-        let stored = self.remember_pending_relay_publish(
-            &event,
-            label,
-            chat_id,
-            inner_event_id,
-            target_owner_pubkey_hex,
-            target_device_id,
-        );
+        let stored = self.remember_pending_relay_publish(&event, label, chat_id, inner_event_id);
         if !stored {
             return false;
         }
@@ -99,8 +88,6 @@ impl AppCore {
         label: &str,
         chat_id: Option<String>,
         inner_event_id: Option<String>,
-        target_owner_pubkey_hex: Option<String>,
-        target_device_id: Option<String>,
     ) -> bool {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return false;
@@ -119,8 +106,6 @@ impl AppCore {
             label: label.to_string(),
             event_json,
             inner_event_id,
-            target_owner_pubkey_hex,
-            target_device_id,
             chat_id,
             created_at_secs: event.created_at.as_secs(),
             attempt_count: 0,
@@ -137,12 +122,7 @@ impl AppCore {
             pending.inner_event_id.as_deref(),
             pending.chat_id.as_deref(),
         ) {
-            self.record_message_outer_event(
-                chat_id,
-                message_id,
-                &pending.event_id,
-                pending.target_device_id.as_deref(),
-            );
+            self.record_message_outer_event(chat_id, message_id, &pending.event_id);
         }
         self.pending_relay_publishes
             .insert(pending.event_id.clone(), pending);
@@ -394,29 +374,12 @@ impl AppCore {
         self.pending_relay_publish_inflight.remove(&event_id);
         self.push_debug_log("publish.runtime", detail.clone());
         let pending = self.pending_relay_publishes.get(&event_id).cloned();
-        let message_ref = pending.as_ref().and_then(|pending| {
-            Some((
-                pending.chat_id.clone()?,
-                pending.inner_event_id.clone()?,
-                pending.target_owner_pubkey_hex.clone(),
-            ))
-        });
+        let message_ref = pending
+            .as_ref()
+            .and_then(|pending| Some((pending.chat_id.clone()?, pending.inner_event_id.clone()?)));
         let mut should_retry = false;
         if success {
             self.forget_pending_relay_publish(&event_id);
-            if let Some((chat_id, message_id, target_owner_pubkey_hex)) = message_ref.as_ref() {
-                let targets_local_owner = pending.as_ref().is_some_and(|pending| {
-                    pending.target_owner_pubkey_hex.as_deref()
-                        == Some(pending.owner_pubkey_hex.as_str())
-                });
-                if !targets_local_owner {
-                    self.mark_message_publish_succeeded(
-                        chat_id,
-                        message_id,
-                        target_owner_pubkey_hex.as_deref(),
-                    );
-                }
-            }
         } else if let Some(pending) = self.pending_relay_publishes.get_mut(&event_id) {
             pending.attempt_count = pending.attempt_count.saturating_add(1);
             pending.last_error = Some(detail.clone());
@@ -425,7 +388,7 @@ impl AppCore {
             }
             should_retry = true;
         }
-        if let Some((chat_id, message_id, _)) = message_ref {
+        if let Some((chat_id, message_id)) = message_ref {
             for relay_url in &relay_urls {
                 self.add_message_transport_channel(
                     &chat_id,

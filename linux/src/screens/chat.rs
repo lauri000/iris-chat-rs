@@ -594,16 +594,6 @@ fn present_message_info(
             true,
         );
     }
-    for (idx, value) in trace.target_device_ids.iter().enumerate() {
-        let npub = peer_input_to_npub(value.clone());
-        let display = if npub.is_empty() { value.clone() } else { npub };
-        info_copy_row(
-            &ids_section,
-            if idx == 0 { "Target devices" } else { "" },
-            &display,
-            true,
-        );
-    }
     content.append(&ids_section);
 
     // Attachments
@@ -1905,14 +1895,6 @@ fn message_info_text(message: &ChatMessageSnapshot, chat: Option<&CurrentChatSna
             .map(|id| short_npub(id))
             .collect();
         lines.push(format!("Queued devices {}", npubs.join(", ")));
-    }
-    if !trace.target_device_ids.is_empty() {
-        let npubs: Vec<String> = trace
-            .target_device_ids
-            .iter()
-            .map(|id| short_npub(id))
-            .collect();
-        lines.push(format!("Devices {}", npubs.join(", ")));
     }
     if let Some(error) = trace
         .last_transport_error

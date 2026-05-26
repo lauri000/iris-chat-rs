@@ -45,8 +45,6 @@ pub struct ProtocolPublish {
     pub event: Event,
     pub chat_id: String,
     pub inner_event_id: Option<String>,
-    pub target_owner_pubkey_hex: Option<String>,
-    pub target_device_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]

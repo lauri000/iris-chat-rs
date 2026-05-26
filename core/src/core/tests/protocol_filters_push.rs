@@ -367,17 +367,9 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
         "bootstrap publish should not carry message delivery metadata"
     );
     assert_eq!(
-        bootstrap_publishes[0].target_owner_pubkey_hex.as_deref(),
-        Some(peer_owner.public_key().to_hex().as_str())
-    );
-    assert_eq!(
         payload_publishes.len(),
         1,
         "payload phase should contain the ready phone delivery"
-    );
-    assert_eq!(
-        payload_publishes[0].target_owner_pubkey_hex.as_deref(),
-        Some(peer_owner.public_key().to_hex().as_str())
     );
 
     let mut ctx = ProtocolContext::new(NdrUnixSeconds(120), &mut rng);
@@ -843,7 +835,7 @@ fn remote_group_metadata_syncs_to_local_sibling() {
 }
 
 #[test]
-fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
+fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
     let owner = Keys::generate();
     let primary_device = Keys::generate();
     let linked_device = Keys::generate();
@@ -918,7 +910,7 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
         .expect("linked admin appkeys");
 
     let group_id = "linked-sibling-group".to_string();
-    let mut snapshot = test_group_snapshot(
+    let snapshot = test_group_snapshot(
         &group_id,
         "Linked Sibling Group",
         admin_owner.public_key(),
@@ -926,7 +918,6 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
         vec![admin_owner.public_key()],
         1,
     );
-    snapshot.protocol = nostr_double_ratchet::GroupProtocol::PairwiseFanoutV1;
     let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
     let metadata_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
@@ -982,7 +973,7 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
             Some("linked-group-inner".to_string()),
         )
         .expect("linked group send");
-    let local_sibling_events = protocol_publish_events_for_target(
+    let candidate_message_events = protocol_publish_events_for_target(
         &result.effects,
         &target_owner_hex,
         &target_device_hex,
@@ -998,7 +989,7 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
     };
 
     assert!(
-        !local_sibling_events.is_empty(),
+        !candidate_message_events.is_empty(),
         "group send should prepare a local sibling copy for the primary device; queued={:?} pending_group_fanouts={} pending_targets={:?}",
         result.queued_targets,
         linked.debug_snapshot().pending_group_fanout_count,
@@ -1013,61 +1004,13 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
             .observe_invite_response_event(event)
             .expect("primary processes linked bootstrap response");
     }
-    let known_primary_authors_after_bootstrap =
-        primary.message_author_pubkeys_for_owner(owner.public_key());
-    assert!(
-        local_sibling_events
-            .iter()
-            .all(|event| known_primary_authors_after_bootstrap.contains(&event.pubkey)),
-        "local sibling group event authors must be known after first-contact bootstrap; before={:?} after={:?} event_authors={:?}",
-        known_primary_authors
-            .iter()
-            .map(PublicKey::to_hex)
-            .collect::<Vec<_>>(),
-        known_primary_authors_after_bootstrap
-            .iter()
-            .map(PublicKey::to_hex)
-            .collect::<Vec<_>>(),
-        local_sibling_events
-            .iter()
-            .map(|event| event.pubkey.to_hex())
-            .collect::<Vec<_>>()
-    );
-
-    let mut received_messages = Vec::new();
-    for event in &local_sibling_events {
-        let decrypted = primary
-            .process_direct_message_event(event)
-            .expect("primary processes linked group copy")
-            .expect("primary decrypts linked group copy");
-        let outcome = primary
-            .process_group_pairwise_payload(
-                decrypted.content.as_bytes(),
-                decrypted.sender,
-                decrypted.sender_device,
-            )
-            .expect("primary processes group payload from linked copy");
-        received_messages.extend(outcome.events.into_iter().filter_map(|event| match event {
-            GroupIncomingEvent::Message(message) => Some(message),
-            _ => None,
-        }));
-    }
-    assert!(
-        received_messages.iter().any(|message| {
-            message.group_id == group_id
-                && message.sender_owner == ndr_owner_pubkey(owner.public_key())
-                && message.sender_device == Some(ndr_device_pubkey(linked_device.public_key()))
-                && message.body == b"linked sibling group body".to_vec()
-        }),
-        "primary should apply linked-device group copy as an owner-authored message"
-    );
 }
 
 #[test]
-fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
+fn message_sent_waits_for_peer_and_local_sibling_publish_acks() {
     let owner = Keys::generate();
     let device = Keys::generate();
-    let sibling = Keys::generate();
+    let _sibling = Keys::generate();
     let peer = Keys::generate();
     let mut core = logged_in_test_core("local-sibling-ack-direct-delivery", &owner, &device);
     let chat_id = peer.public_key().to_hex();
@@ -1093,10 +1036,26 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
             label: "test".to_string(),
             event_json: serde_json::to_string(&local_event).expect("event json"),
             inner_event_id: Some(message_id.clone()),
-            target_owner_pubkey_hex: Some(owner.public_key().to_hex()),
-            target_device_id: Some(sibling.public_key().to_hex()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: local_event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        },
+    );
+    let peer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "peer")
+        .sign_with_keys(&device)
+        .expect("peer event");
+    let peer_event_id = peer_event.id.to_string();
+    core.pending_relay_publishes.insert(
+        peer_event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: peer_event_id.clone(),
+            label: "test".to_string(),
+            event_json: serde_json::to_string(&peer_event).expect("event json"),
+            inner_event_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            created_at_secs: peer_event.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,
         },
@@ -1142,8 +1101,6 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
             label: "test".to_string(),
             event_json: serde_json::to_string(&lingering_local_event).expect("event json"),
             inner_event_id: Some(message_id.clone()),
-            target_owner_pubkey_hex: Some(owner.public_key().to_hex()),
-            target_device_id: Some(sibling.public_key().to_hex()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: lingering_local_event.created_at.as_secs(),
             attempt_count: 0,
@@ -1151,26 +1108,6 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
         },
     );
 
-    let peer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "peer")
-        .sign_with_keys(&device)
-        .expect("peer event");
-    let peer_event_id = peer_event.id.to_string();
-    core.pending_relay_publishes.insert(
-        peer_event_id.clone(),
-        PendingRelayPublish {
-            owner_pubkey_hex: owner.public_key().to_hex(),
-            event_id: peer_event_id.clone(),
-            label: "test".to_string(),
-            event_json: serde_json::to_string(&peer_event).expect("event json"),
-            inner_event_id: Some(message_id.clone()),
-            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
-            target_device_id: Some(peer.public_key().to_hex()),
-            chat_id: Some(chat_id.clone()),
-            created_at_secs: peer_event.created_at.as_secs(),
-            attempt_count: 0,
-            last_error: None,
-        },
-    );
     core.handle_relay_publish_finished(
         peer_event_id,
         true,
@@ -1191,8 +1128,30 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
     assert!(
         core.pending_relay_publishes
             .contains_key(&lingering_local_event_id),
-        "local sibling pending relay work should not decide peer recipient delivery"
+        "local sibling pending relay work should keep the message pending"
     );
+    assert_eq!(message.delivery, DeliveryState::Pending);
+    assert_eq!(
+        message.recipient_deliveries[0].delivery,
+        DeliveryState::Pending
+    );
+
+    core.handle_relay_publish_finished(
+        lingering_local_event_id,
+        true,
+        vec!["wss://relay.example".to_string()],
+        "local sibling ack".to_string(),
+    );
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("message after final ack");
     assert_eq!(message.delivery, DeliveryState::Sent);
     assert_eq!(
         message.recipient_deliveries[0].delivery,
@@ -1232,8 +1191,6 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
             label: APPCORE_PROTOCOL_LABEL.to_string(),
             event_json: serde_json::to_string(&bootstrap_event).expect("event json"),
             inner_event_id: None,
-            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
-            target_device_id: None,
             chat_id: Some(chat_id.clone()),
             created_at_secs: bootstrap_event.created_at.as_secs(),
             attempt_count: 0,
@@ -1253,8 +1210,6 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
             label: APPCORE_PROTOCOL_LABEL.to_string(),
             event_json: serde_json::to_string(&payload_event).expect("event json"),
             inner_event_id: Some(message_id.clone()),
-            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
-            target_device_id: Some(peer.public_key().to_hex()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: payload_event.created_at.as_secs(),
             attempt_count: 0,
@@ -1313,6 +1268,75 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
         message.recipient_deliveries[0].delivery,
         DeliveryState::Sent
     );
+}
+
+#[test]
+fn sender_key_group_payload_publish_ack_marks_sent_after_outer_success() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("sender-key-group-publish-completion", &owner, &device);
+
+    core.create_group("Sender key group", &[]);
+    let chat_id = core.active_chat_id.clone().expect("active group chat");
+    core.pending_relay_publishes.clear();
+
+    core.send_group_message(
+        &chat_id,
+        "sender-key visible message",
+        UnixSeconds(1_777_159_600),
+        None,
+    );
+
+    let message_id = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.body == "sender-key visible message")
+        })
+        .map(|message| message.id.clone())
+        .expect("outgoing group message");
+    let event_id = core
+        .pending_relay_publishes
+        .values()
+        .find(|pending| {
+            pending.chat_id.as_deref() == Some(chat_id.as_str())
+                && pending.inner_event_id.as_deref() == Some(message_id.as_str())
+        })
+        .map(|pending| pending.event_id.clone())
+        .expect("sender-key group message pending relay publish");
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("message before relay ack");
+    assert_ne!(message.delivery, DeliveryState::Sent);
+
+    core.handle_relay_publish_finished(
+        event_id,
+        true,
+        vec!["wss://relay.example".to_string()],
+        "sender-key group message ack".to_string(),
+    );
+
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("message after relay ack");
+    assert_eq!(message.delivery, DeliveryState::Sent);
 }
 
 #[test]

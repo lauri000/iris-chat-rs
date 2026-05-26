@@ -581,11 +581,13 @@ impl ProtocolEngine {
             .collect()
     }
 
-    pub fn has_queued_remote_message_work(&self, message_id: &str) -> bool {
-        self.pending_outbound.iter().any(|pending| {
-            pending.message_id == message_id
-                && !self.pending_remote_target_hexes(pending).is_empty()
-        })
+    pub fn has_queued_message_work(&self, message_id: &str) -> bool {
+        self.pending_outbound
+            .iter()
+            .any(|pending| pending.message_id == message_id)
+            || self.pending_group_fanouts.iter().any(|pending| {
+                pending.inner_event_id.as_deref() == Some(message_id)
+            })
     }
 
     fn state_checkpoint(&self) -> ProtocolEngineCheckpoint {
