@@ -329,20 +329,23 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
             .contains(&peer_laptop.public_key().to_hex()),
         "missing peer laptop should remain queued"
     );
-    let bootstrap_events = protocol_publish_events_for_label(
-        &result.effects,
-        &result.publish_registrations,
-        APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
-    );
+    let bootstrap_events = protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND);
     let bootstrap_registrations = result
-        .publish_registrations
-        .values()
-        .filter(|registration| registration.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL)
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::Publish(event) if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND => {
+                result.publish_registrations.get(&event.id.to_string())
+            }
+            _ => None,
+        })
         .collect::<Vec<_>>();
     let payload_registrations = result
         .publish_registrations
         .values()
-        .filter(|registration| registration.label == APPCORE_PROTOCOL_FIRST_CONTACT_LABEL)
+        .filter(|registration| {
+            registration.success_action_kind == PendingRelayPublishSuccessActionKind::MarkMessageSent
+        })
         .collect::<Vec<_>>();
     assert!(
         bootstrap_events
@@ -353,7 +356,12 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
     assert_eq!(
         bootstrap_registrations[0].inner_event_id.as_deref(),
         Some(result.message_id.as_str()),
-        "bootstrap publish must be tied to the app message so payload can wait on it"
+        "bootstrap publish must be tied to the app message for durable tracing"
+    );
+    assert_eq!(
+        bootstrap_registrations[0].success_action_kind,
+        PendingRelayPublishSuccessActionKind::None,
+        "bootstrap publish success is receiver-side state and must not release payloads"
     );
     assert_eq!(
         bootstrap_registrations[0].target_owner_pubkey_hex.as_deref(),
@@ -462,11 +470,7 @@ fn appcore_ownerless_invite_uses_known_roster_owner_for_first_contact() {
         result.queued_targets
     );
     assert!(
-        protocol_publish_events_for_label(
-            &result.effects,
-            &result.publish_registrations,
-            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
-        )
+        protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND)
         .iter()
         .any(|event| event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
         "first contact should publish an invite response for ownerless peer invites"
@@ -797,11 +801,7 @@ fn remote_group_metadata_syncs_to_local_sibling() {
 
     let target_owner_hex = owner.public_key().to_hex();
     let target_device_hex = linked_device.public_key().to_hex();
-    let bootstrap_events = protocol_publish_events_for_label(
-        &outcome.effects,
-        &outcome.publish_registrations,
-        APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
-    );
+    let bootstrap_events = protocol_publish_events_with_kind(&outcome.effects, INVITE_RESPONSE_KIND);
     let sibling_payload_events = protocol_publish_events_for_target(
         &outcome.effects,
         &outcome.publish_registrations,
@@ -958,11 +958,7 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
         &target_owner_hex,
         &target_device_hex,
     ) {
-        protocol_publish_events_for_label(
-            &linked_metadata_result.effects,
-            &linked_metadata_result.publish_registrations,
-            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
-        )
+        protocol_publish_events_with_kind(&linked_metadata_result.effects, INVITE_RESPONSE_KIND)
     } else {
         Vec::new()
     };
@@ -996,11 +992,7 @@ fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
         &target_owner_hex,
         &target_device_hex,
     ) {
-        protocol_publish_events_for_label(
-            &result.effects,
-            &result.publish_registrations,
-            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
-        )
+        protocol_publish_events_with_kind(&result.effects, INVITE_RESPONSE_KIND)
     } else {
         Vec::new()
     };
@@ -1096,9 +1088,8 @@ fn pending_relay_publish_success_action_ignores_local_device_targets() {
     };
 
     assert_eq!(
-        PendingRelayPublishSuccessActionKind::from_publish_metadata(
+        PendingRelayPublishSuccessActionKind::MarkMessageSent.for_pending_publish(
             &local_owner,
-            "test",
             Some("chat-1"),
             Some("message-1"),
             Some(&local_owner),
@@ -1114,27 +1105,18 @@ fn pending_relay_publish_success_action_ignores_local_device_targets() {
         PendingRelayPublishSuccessAction::None
     );
     assert_eq!(
-        PendingRelayPublishSuccessActionKind::from_publish_metadata(
+        PendingRelayPublishSuccessActionKind::None.for_pending_publish(
             &local_owner,
-            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
             Some("chat-1"),
             Some("message-1"),
-            Some(&local_owner),
+            Some(&peer_owner),
         ),
-        PendingRelayPublishSuccessActionKind::ReleaseFirstContactPayloads
+        PendingRelayPublishSuccessActionKind::None,
+        "bootstrap registrations explicitly store no publish-success action"
     );
     assert_eq!(
-        pending(
-            PendingRelayPublishSuccessActionKind::ReleaseFirstContactPayloads,
-            Some(local_owner.clone())
-        )
-        .success_action(),
-        PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads
-    );
-    assert_eq!(
-        PendingRelayPublishSuccessActionKind::from_publish_metadata(
+        PendingRelayPublishSuccessActionKind::MarkMessageSent.for_pending_publish(
             &local_owner,
-            "test",
             Some("chat-1"),
             Some("message-1"),
             Some(&peer_owner),
@@ -1301,7 +1283,7 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
 }
 
 #[test]
-fn first_contact_payload_waits_for_bootstrap_publish_success() {
+fn bootstrap_publish_success_does_not_gate_payload_delivery() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -1329,10 +1311,9 @@ fn first_contact_payload_waits_for_bootstrap_publish_success() {
         PendingRelayPublish {
             owner_pubkey_hex: owner.public_key().to_hex(),
             event_id: bootstrap_event_id.clone(),
-            label: APPCORE_PROTOCOL_BOOTSTRAP_LABEL.to_string(),
+            label: APPCORE_PROTOCOL_LABEL.to_string(),
             event_json: serde_json::to_string(&bootstrap_event).expect("event json"),
-            success_action_kind:
-                PendingRelayPublishSuccessActionKind::ReleaseFirstContactPayloads,
+            success_action_kind: PendingRelayPublishSuccessActionKind::None,
             inner_event_id: Some(message_id.clone()),
             target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
             target_device_id: None,
@@ -1353,7 +1334,7 @@ fn first_contact_payload_waits_for_bootstrap_publish_success() {
         PendingRelayPublish {
             owner_pubkey_hex: owner.public_key().to_hex(),
             event_id: payload_event_id.clone(),
-            label: APPCORE_PROTOCOL_FIRST_CONTACT_LABEL.to_string(),
+            label: APPCORE_PROTOCOL_LABEL.to_string(),
             event_json: serde_json::to_string(&payload_event).expect("event json"),
             success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
             inner_event_id: Some(message_id.clone()),
@@ -1365,15 +1346,6 @@ fn first_contact_payload_waits_for_bootstrap_publish_success() {
             attempt_count: 0,
             last_error: None,
         },
-    );
-
-    let payload_pending = core
-        .pending_relay_publishes
-        .get(&payload_event_id)
-        .expect("payload pending");
-    assert!(
-        core.should_delay_first_contact_payload_publish(payload_pending),
-        "payload must not publish while its invite-response bootstrap is still pending"
     );
 
     core.handle_relay_publish_finished(
@@ -1401,13 +1373,9 @@ fn first_contact_payload_waits_for_bootstrap_publish_success() {
         message.recipient_deliveries[0].delivery,
         DeliveryState::Pending
     );
-    let payload_pending = core
-        .pending_relay_publishes
-        .get(&payload_event_id)
-        .expect("payload still pending after bootstrap");
     assert!(
-        !core.should_delay_first_contact_payload_publish(payload_pending),
-        "payload may publish after bootstrap succeeds"
+        core.pending_relay_publishes.contains_key(&payload_event_id),
+        "payload is already queued independently and bootstrap success must not consume it"
     );
 
     core.handle_relay_publish_finished(

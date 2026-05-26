@@ -559,7 +559,7 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
 }
 
 #[test]
-fn staged_first_contact_queues_payload_durably_before_delayed_publish() {
+fn first_contact_publishes_bootstrap_and_payload_durably() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -586,7 +586,8 @@ fn staged_first_contact_queues_payload_durably_before_delayed_publish() {
         (
             bootstrap_id,
             ProtocolPublishRegistration {
-                label: APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+                label: APPCORE_PROTOCOL_LABEL,
+                success_action_kind: PendingRelayPublishSuccessActionKind::None,
                 message_id: Some(message_id.clone()),
                 chat_id: Some(chat_id.clone()),
                 inner_event_id: Some(message_id.clone()),
@@ -597,7 +598,8 @@ fn staged_first_contact_queues_payload_durably_before_delayed_publish() {
         (
             payload_id.clone(),
             ProtocolPublishRegistration {
-                label: APPCORE_PROTOCOL_FIRST_CONTACT_LABEL,
+                label: APPCORE_PROTOCOL_LABEL,
+                success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
                 message_id: Some(message_id.clone()),
                 chat_id: Some(chat_id.clone()),
                 inner_event_id: Some(message_id.clone()),
@@ -615,13 +617,20 @@ fn staged_first_contact_queues_payload_durably_before_delayed_publish() {
     let pending = core
         .pending_relay_publishes
         .get(&payload_id)
-        .expect("payload should be queued before delayed publish");
-    assert_eq!(pending.label, "appcore-protocol-first-contact");
+        .expect("payload should be queued");
+    assert_eq!(pending.label, APPCORE_PROTOCOL_LABEL);
+    assert_eq!(
+        pending.success_action_kind,
+        PendingRelayPublishSuccessActionKind::MarkMessageSent
+    );
     assert_eq!(pending.message_id.as_deref(), Some(message_id.as_str()));
     assert_eq!(pending.chat_id.as_deref(), Some(chat_id.as_str()));
     assert!(
-        !core.pending_relay_publish_inflight.contains(&payload_id),
-        "payload should be durable but not in flight until the first-contact delay fires"
+        core.pending_relay_publishes
+            .values()
+            .any(|pending| pending.success_action_kind == PendingRelayPublishSuccessActionKind::None
+                && pending.message_id.as_deref() == Some(message_id.as_str())),
+        "bootstrap should be durable with no publish-success action"
     );
 }
 
@@ -1095,6 +1104,7 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
         first,
         ProtocolPublishRegistration {
             label: APPCORE_PROTOCOL_LABEL,
+            success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
             message_id: Some(message_id.clone()),
             chat_id: Some(chat_id.clone()),
             inner_event_id: Some("inner-message".to_string()),
@@ -1106,6 +1116,7 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
         second,
         ProtocolPublishRegistration {
             label: APPCORE_PROTOCOL_LABEL,
+            success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
             message_id: Some(message_id),
             chat_id: Some(chat_id.clone()),
             inner_event_id: Some("inner-message".to_string()),

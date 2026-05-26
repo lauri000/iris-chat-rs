@@ -617,28 +617,28 @@ impl AppCore {
                     .iter()
                     .filter(|effect| matches!(effect, ProtocolEffect::Publish(_)))
                     .count();
-                let staged_effects = result
-                    .publish_registrations
-                    .values()
-                    .filter(|registration| {
-                        registration.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL
-                            || registration.label == APPCORE_PROTOCOL_FIRST_CONTACT_LABEL
-                    })
-                    .count();
                 let targeted_effects = result
                     .publish_registrations
                     .values()
                     .filter(|registration| registration.target_owner_pubkey_hex.is_some())
                     .count();
+                let mark_sent_effects = result
+                    .publish_registrations
+                    .values()
+                    .filter(|registration| {
+                        registration.success_action_kind
+                            == PendingRelayPublishSuccessActionKind::MarkMessageSent
+                    })
+                    .count();
                 self.push_debug_log(
                     "message.group.send.appcore",
                     format!(
-                        "chat_id={chat_id} message_id={message_id} event_ids={} effects={} staged={} signed={} targeted={} queued_targets={} targets={}",
+                        "chat_id={chat_id} message_id={message_id} event_ids={} effects={} signed={} targeted={} mark_sent={} queued_targets={} targets={}",
                         result.event_ids.len(),
                         result.effects.len(),
-                        staged_effects,
                         publish_effects,
                         targeted_effects,
+                        mark_sent_effects,
                         result.queued_targets.len(),
                         summarize_group_send_effect_targets(&result.publish_registrations)
                     ),
@@ -1794,15 +1794,16 @@ pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMes
 fn summarize_group_send_effect_targets(registrations: &ProtocolPublishRegistrations) -> String {
     let mut targets = Vec::new();
     for (event_id, registration) in registrations {
-        let stage = match registration.label {
-            APPCORE_PROTOCOL_BOOTSTRAP_LABEL => "staged_bootstrap",
-            APPCORE_PROTOCOL_FIRST_CONTACT_LABEL => "staged_payload",
-            _ if registration.target_owner_pubkey_hex.is_some()
-                || registration.target_device_id.is_some() =>
-            {
-                "targeted"
-            }
-            _ => "signed",
+        let stage = if registration.target_owner_pubkey_hex.is_some()
+            || registration.target_device_id.is_some()
+        {
+            "targeted"
+        } else if registration.success_action_kind
+            == PendingRelayPublishSuccessActionKind::MarkMessageSent
+        {
+            "mark_sent"
+        } else {
+            "signed"
         };
         targets.push(format!(
             "{stage}:{}/{}:{}",

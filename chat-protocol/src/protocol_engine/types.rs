@@ -3,9 +3,14 @@ const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
 const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
+const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
 
 fn default_true() -> bool {
     true
+}
+
+fn group_chat_id(group_id: &str) -> String {
+    format!("group:{group_id}")
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,9 +41,53 @@ struct ProtocolEnginePersistedState {
     last_backfill_attempt_secs: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingRelayPublishSuccessActionKind {
+    #[default]
+    None,
+    MarkMessageSent,
+}
+
+impl PendingRelayPublishSuccessActionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::MarkMessageSent => "mark_message_sent",
+        }
+    }
+
+    pub fn from_storage(value: &str) -> Self {
+        match value {
+            "mark_message_sent" => Self::MarkMessageSent,
+            _ => Self::None,
+        }
+    }
+
+    pub fn for_pending_publish(
+        self,
+        owner_pubkey_hex: &str,
+        chat_id: Option<&str>,
+        message_id: Option<&str>,
+        target_owner_pubkey_hex: Option<&str>,
+    ) -> Self {
+        match self {
+            Self::MarkMessageSent
+                if target_owner_pubkey_hex != Some(owner_pubkey_hex)
+                    && chat_id.is_some()
+                    && message_id.is_some() =>
+            {
+                Self::MarkMessageSent
+            }
+            _ => Self::None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ProtocolPublishRegistration {
     pub label: &'static str,
+    pub success_action_kind: PendingRelayPublishSuccessActionKind,
     pub message_id: Option<String>,
     pub chat_id: Option<String>,
     pub inner_event_id: Option<String>,
@@ -56,6 +105,7 @@ impl ProtocolPublishRegistration {
     ) -> Self {
         Self {
             label: APPCORE_PROTOCOL_LABEL,
+            success_action_kind: PendingRelayPublishSuccessActionKind::None,
             message_id,
             chat_id,
             inner_event_id,
@@ -64,13 +114,12 @@ impl ProtocolPublishRegistration {
         }
     }
 
-    fn with_label(mut self, label: &'static str) -> Self {
-        self.label = label;
+    fn with_success_action_kind(
+        mut self,
+        success_action_kind: PendingRelayPublishSuccessActionKind,
+    ) -> Self {
+        self.success_action_kind = success_action_kind;
         self
-    }
-
-    pub fn is_first_contact_payload(&self) -> bool {
-        self.label == APPCORE_PROTOCOL_FIRST_CONTACT_LABEL
     }
 }
 
@@ -153,7 +202,6 @@ struct ProtocolPendingInbound {
     metadata_verified: bool,
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolPendingInboundTestDebug {
     pub event_id: String,
@@ -404,7 +452,6 @@ pub struct ProtocolEngine {
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
-    #[cfg(test)]
     known_message_author_cache_build_count: std::cell::Cell<u64>,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,

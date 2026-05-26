@@ -49,19 +49,11 @@ fn protocol_publish_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
         .collect()
 }
 
-fn protocol_publish_events_for_label(
-    effects: &[ProtocolEffect],
-    registrations: &ProtocolPublishRegistrations,
-    label: &str,
-) -> Vec<Event> {
+fn protocol_publish_events_with_kind(effects: &[ProtocolEffect], kind: u32) -> Vec<Event> {
     effects
         .iter()
         .filter_map(|effect| match effect {
-            ProtocolEffect::Publish(event)
-                if registrations
-                    .get(&event.id.to_string())
-                    .is_some_and(|registration| registration.label == label) =>
-            {
+            ProtocolEffect::Publish(event) if event.kind.as_u16() as u32 == kind => {
                 Some(event.clone())
             }
             _ => None,
@@ -112,7 +104,8 @@ fn protocol_targeted_payload_count(
         .values()
         .filter(|registration| {
             registration.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
-                && registration.label != APPCORE_PROTOCOL_BOOTSTRAP_LABEL
+                && registration.success_action_kind
+                    == PendingRelayPublishSuccessActionKind::MarkMessageSent
         })
         .count()
 }
