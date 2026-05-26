@@ -44,54 +44,9 @@ struct ProtocolEnginePersistedState {
     last_backfill_attempt_secs: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ProtocolPublishSuccessActionKind {
-    #[default]
-    None,
-    MarkMessageSent,
-}
-
-impl ProtocolPublishSuccessActionKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::MarkMessageSent => "mark_message_sent",
-        }
-    }
-
-    pub fn from_storage(value: &str) -> Self {
-        match value {
-            "mark_message_sent" => Self::MarkMessageSent,
-            _ => Self::None,
-        }
-    }
-
-    pub fn for_pending_publish(
-        self,
-        owner_pubkey_hex: &str,
-        chat_id: Option<&str>,
-        message_id: Option<&str>,
-        target_owner_pubkey_hex: Option<&str>,
-    ) -> Self {
-        match self {
-            Self::MarkMessageSent
-                if target_owner_pubkey_hex != Some(owner_pubkey_hex)
-                    && chat_id.is_some()
-                    && message_id.is_some() =>
-            {
-                Self::MarkMessageSent
-            }
-            _ => Self::None,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct ProtocolPublish {
     pub event: Event,
-    pub success_action_kind: ProtocolPublishSuccessActionKind,
-    pub message_id: Option<String>,
     pub chat_id: Option<String>,
     pub inner_event_id: Option<String>,
 }
@@ -99,7 +54,6 @@ pub struct ProtocolPublish {
 impl ProtocolPublish {
     fn protocol(
         event: Event,
-        message_id: Option<String>,
         chat_id: Option<String>,
         inner_event_id: Option<String>,
         target_owner_pubkey_hex: Option<String>,
@@ -107,21 +61,11 @@ impl ProtocolPublish {
     ) -> Self {
         Self {
             event,
-            success_action_kind: ProtocolPublishSuccessActionKind::None,
-            message_id,
             chat_id,
             inner_event_id,
             target_owner_pubkey_hex,
             target_device_id,
         }
-    }
-
-    fn with_success_action_kind(
-        mut self,
-        success_action_kind: ProtocolPublishSuccessActionKind,
-    ) -> Self {
-        self.success_action_kind = success_action_kind;
-        self
     }
 }
 

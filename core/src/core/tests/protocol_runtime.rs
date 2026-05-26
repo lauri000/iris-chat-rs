@@ -583,17 +583,13 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
     let payload_id = payload.id.to_string();
     let bootstrap_publish = ProtocolPublish {
         event: bootstrap,
-        success_action_kind: ProtocolPublishSuccessActionKind::None,
-        message_id: Some(message_id.clone()),
-        chat_id: Some(chat_id.clone()),
-        inner_event_id: Some(message_id.clone()),
+        chat_id: None,
+        inner_event_id: None,
         target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
         target_device_id: None,
     };
     let payload_publish = ProtocolPublish {
         event: payload,
-        success_action_kind: ProtocolPublishSuccessActionKind::MarkMessageSent,
-        message_id: Some(message_id.clone()),
         chat_id: Some(chat_id.clone()),
         inner_event_id: Some(message_id.clone()),
         target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
@@ -610,18 +606,13 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
         .get(&payload_id)
         .expect("payload should be queued");
     assert_eq!(pending.label, APPCORE_PROTOCOL_LABEL);
-    assert_eq!(
-        pending.success_action_kind,
-        ProtocolPublishSuccessActionKind::MarkMessageSent
-    );
-    assert_eq!(pending.message_id.as_deref(), Some(message_id.as_str()));
+    assert_eq!(pending.inner_event_id.as_deref(), Some(message_id.as_str()));
     assert_eq!(pending.chat_id.as_deref(), Some(chat_id.as_str()));
     assert!(
         core.pending_relay_publishes
             .values()
-            .any(|pending| pending.success_action_kind == ProtocolPublishSuccessActionKind::None
-                && pending.message_id.as_deref() == Some(message_id.as_str())),
-        "bootstrap should be durable with no publish-success action"
+            .any(|pending| pending.inner_event_id.is_none() && pending.chat_id.is_none()),
+        "bootstrap should be durable without message delivery metadata"
     );
 }
 
@@ -660,8 +651,9 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
             event_id: event_id.clone(),
             label: "app-keys".to_string(),
             event_json: serde_json::to_string(&event).expect("event json"),
-            success_action_kind: ProtocolPublishSuccessActionKind::None,
             inner_event_id: None,
+            target_owner_pubkey_hex: None,
+            target_device_id: None,
             chat_id: None,
             created_at_secs: event.created_at.as_secs(),
             attempt_count: 0,
@@ -752,8 +744,9 @@ fn failed_publish_drain_batches_results_and_schedules_one_retry() {
                 event_id: event_id.clone(),
                 label: "test".to_string(),
                 event_json: serde_json::to_string(&event).expect("event json"),
-                success_action_kind: ProtocolPublishSuccessActionKind::None,
                 inner_event_id: None,
+                target_owner_pubkey_hex: None,
+                target_device_id: None,
                 chat_id: None,
                 created_at_secs: event.created_at.as_secs(),
                 attempt_count: 0,
@@ -1087,19 +1080,15 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
 
     assert!(core.publish_protocol_event(ProtocolPublish {
         event: first,
-        success_action_kind: ProtocolPublishSuccessActionKind::MarkMessageSent,
-        message_id: Some(message_id.clone()),
         chat_id: Some(chat_id.clone()),
-        inner_event_id: Some("inner-message".to_string()),
+        inner_event_id: Some(message_id.clone()),
         target_owner_pubkey_hex: Some(chat_id.clone()),
         target_device_id: Some(target_device_id.clone()),
     }));
     assert!(core.publish_protocol_event(ProtocolPublish {
         event: second,
-        success_action_kind: ProtocolPublishSuccessActionKind::MarkMessageSent,
-        message_id: Some(message_id),
         chat_id: Some(chat_id.clone()),
-        inner_event_id: Some("inner-message".to_string()),
+        inner_event_id: Some(message_id),
         target_owner_pubkey_hex: Some(chat_id),
         target_device_id: Some(target_device_id),
     }));

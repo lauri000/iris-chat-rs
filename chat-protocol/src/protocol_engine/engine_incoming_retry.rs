@@ -351,7 +351,6 @@ impl ProtocolEngine {
                 effects.extend(protocol_effects_from_prepared(
                     &remote,
                     pending.inner_event_id.clone(),
-                    Some(pending.message_id.clone()),
                     Some(pending.chat_id.clone()),
                     &mut event_ids,
                 )?);
@@ -374,7 +373,6 @@ impl ProtocolEngine {
                     effects.extend(protocol_effects_from_prepared(
                         &local,
                         pending.inner_event_id.clone(),
-                        Some(pending.message_id.clone()),
                         Some(pending.chat_id.clone()),
                         &mut event_ids,
                     )?);
@@ -761,7 +759,6 @@ impl ProtocolEngine {
             effects.extend(protocol_effects_from_group_prepared_publish(
                 &prepared,
                 pending.inner_event_id.clone(),
-                message_id,
                 chat_id,
                 &mut event_ids,
             )?);

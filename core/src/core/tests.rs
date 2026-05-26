@@ -102,8 +102,7 @@ fn protocol_targeted_payload_count(effects: &[ProtocolEffect], owner_pubkey_hex:
                 effect,
                 ProtocolEffect::Publish(publish)
                     if publish.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
-                        && publish.success_action_kind
-                            == ProtocolPublishSuccessActionKind::MarkMessageSent
+                        && publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
             )
         })
         .count()

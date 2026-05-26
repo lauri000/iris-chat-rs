@@ -1,8 +1,7 @@
 use super::super::{
     KnownAppKeyDevice, KnownAppKeys, OwnerProfileRecord, PendingRelayPublish,
     PersistedAuthorizationState, PersistedDeliveryState, PersistedMessage, PersistedPreferences,
-    PersistedState, PersistedThread, ProtocolPublishSuccessActionKind, ThreadRecord,
-    PERSISTED_STATE_VERSION,
+    PersistedState, PersistedThread, ThreadRecord, PERSISTED_STATE_VERSION,
 };
 use super::SharedConnection;
 use crate::state::{
@@ -354,8 +353,8 @@ impl AppStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let mut stmt = conn.prepare(
-            "SELECT owner_pubkey_hex, event_id, label, event_json, success_action_kind, inner_event_id,
-                    target_owner_pubkey_hex, target_device_id, message_id, chat_id, created_at_secs,
+            "SELECT owner_pubkey_hex, event_id, label, event_json, inner_event_id,
+                    target_owner_pubkey_hex, target_device_id, chat_id, created_at_secs,
                     attempt_count, last_error
              FROM pending_relay_publishes
              WHERE owner_pubkey_hex = ?1
@@ -367,17 +366,13 @@ impl AppStore {
                 event_id: row.get(1)?,
                 label: row.get(2)?,
                 event_json: row.get(3)?,
-                success_action_kind: ProtocolPublishSuccessActionKind::from_storage(
-                    &row.get::<_, String>(4)?,
-                ),
-                inner_event_id: row.get(5)?,
-                target_owner_pubkey_hex: row.get(6)?,
-                target_device_id: row.get(7)?,
-                message_id: row.get(8)?,
-                chat_id: row.get(9)?,
-                created_at_secs: row.get::<_, i64>(10)?.max(0) as u64,
-                attempt_count: row.get::<_, i64>(11)?.max(0) as u64,
-                last_error: row.get(12)?,
+                inner_event_id: row.get(4)?,
+                target_owner_pubkey_hex: row.get(5)?,
+                target_device_id: row.get(6)?,
+                chat_id: row.get(7)?,
+                created_at_secs: row.get::<_, i64>(8)?.max(0) as u64,
+                attempt_count: row.get::<_, i64>(9)?.max(0) as u64,
+                last_error: row.get(10)?,
             })
         })?;
         let mut pending = Vec::new();
@@ -397,17 +392,18 @@ impl AppStore {
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         conn.execute(
             "INSERT INTO pending_relay_publishes(
-                event_id, owner_pubkey_hex, label, event_json, success_action_kind, inner_event_id,
-                target_owner_pubkey_hex, target_device_id, message_id, chat_id, created_at_secs,
+                event_id, owner_pubkey_hex, label, event_json, inner_event_id,
+                target_owner_pubkey_hex, target_device_id, chat_id, created_at_secs,
                 attempt_count, last_error
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(event_id) DO UPDATE SET
                 owner_pubkey_hex = excluded.owner_pubkey_hex,
                 label = excluded.label,
                 event_json = excluded.event_json,
-                success_action_kind = excluded.success_action_kind,
                 inner_event_id = COALESCE(excluded.inner_event_id, pending_relay_publishes.inner_event_id),
+                target_owner_pubkey_hex = COALESCE(excluded.target_owner_pubkey_hex, pending_relay_publishes.target_owner_pubkey_hex),
+                target_device_id = COALESCE(excluded.target_device_id, pending_relay_publishes.target_device_id),
                 chat_id = COALESCE(excluded.chat_id, pending_relay_publishes.chat_id),
                 created_at_secs = excluded.created_at_secs,
                 attempt_count = excluded.attempt_count,
@@ -417,8 +413,9 @@ impl AppStore {
                 &pending.owner_pubkey_hex,
                 &pending.label,
                 &pending.event_json,
-                pending.success_action_kind.as_str(),
                 &pending.inner_event_id,
+                &pending.target_owner_pubkey_hex,
+                &pending.target_device_id,
                 &pending.chat_id,
                 pending.created_at_secs as i64,
                 pending.attempt_count as i64,
@@ -1722,18 +1719,16 @@ mod tests {
     }
 
     #[test]
-    fn pending_relay_publish_roundtrips_success_action_kind() {
+    fn pending_relay_publish_roundtrips_inner_event_id() {
         let (_tmp, store) = fresh_store();
         let pending = PendingRelayPublish {
             owner_pubkey_hex: "owner".to_string(),
             event_id: "event-1".to_string(),
             label: "runtime".to_string(),
             event_json: "{}".to_string(),
-            success_action_kind: ProtocolPublishSuccessActionKind::MarkMessageSent,
             inner_event_id: Some("inner".to_string()),
             target_owner_pubkey_hex: Some("peer".to_string()),
             target_device_id: Some("device".to_string()),
-            message_id: Some("message".to_string()),
             chat_id: Some("chat".to_string()),
             created_at_secs: 42,
             attempt_count: 1,
@@ -1744,10 +1739,7 @@ mod tests {
 
         let loaded = store.load_pending_relay_publishes("owner").unwrap();
         assert_eq!(loaded.len(), 1);
-        assert_eq!(
-            loaded[0].success_action_kind,
-            ProtocolPublishSuccessActionKind::MarkMessageSent
-        );
+        assert_eq!(loaded[0].inner_event_id.as_deref(), Some("inner"));
     }
 
     #[allow(clippy::too_many_arguments)]

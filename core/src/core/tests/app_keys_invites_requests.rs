@@ -1620,7 +1620,8 @@ fn first_contact_receiver_bootstrap_fetches_preexisting_payload() {
         .find_map(|pending| {
             let event = serde_json::from_str::<Event>(&pending.event_json).ok()?;
             (event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
-                && pending.success_action_kind == ProtocolPublishSuccessActionKind::MarkMessageSent
+                && pending.inner_event_id.is_some()
+                && pending.chat_id.is_some()
                 && pending.target_owner_pubkey_hex.as_deref()
                     == Some(alice_owner.public_key().to_hex().as_str()))
             .then_some(event)
@@ -2266,8 +2267,6 @@ fn queued_runtime_publish_registration_persists_inner_message_id() {
     let event_id = outer_event.id.to_string();
     assert!(core.publish_protocol_event(ProtocolPublish {
         event: outer_event,
-        success_action_kind: ProtocolPublishSuccessActionKind::MarkMessageSent,
-        message_id: Some(inner_message_id.clone()),
         chat_id: Some(chat_id.clone()),
         inner_event_id: Some(inner_message_id.clone()),
         target_owner_pubkey_hex: Some(chat_id.clone()),
@@ -2277,7 +2276,6 @@ fn queued_runtime_publish_registration_persists_inner_message_id() {
         .pending_relay_publishes
         .get(&event_id)
         .expect("pending publish");
-    assert_eq!(pending.message_id.as_deref(), Some(inner_message_id.as_str()));
     assert_eq!(pending.chat_id.as_deref(), Some(chat_id.as_str()));
     assert_eq!(
         pending.inner_event_id.as_deref(),

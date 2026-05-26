@@ -636,6 +636,10 @@ impl AppCore {
                         )
                     })
                     .count();
+                let local_owner_hex = self
+                    .logged_in
+                    .as_ref()
+                    .map(|logged_in| logged_in.owner_pubkey.to_hex());
                 let mark_sent_effects = result
                     .effects
                     .iter()
@@ -643,8 +647,9 @@ impl AppCore {
                         matches!(
                             effect,
                             ProtocolEffect::Publish(publish)
-                                if publish.success_action_kind
-                                    == ProtocolPublishSuccessActionKind::MarkMessageSent
+                                if publish.chat_id.is_some()
+                                    && publish.inner_event_id.is_some()
+                                    && publish.target_owner_pubkey_hex.as_deref() != local_owner_hex.as_deref()
                         )
                     })
                     .count();
@@ -887,9 +892,9 @@ impl AppCore {
 
     pub(super) fn reconcile_outgoing_message_delivery(&mut self, chat_id: &str, message_id: &str) {
         let pending_relay = self.pending_relay_publishes.values().any(|pending| {
-            pending.success_action_kind == ProtocolPublishSuccessActionKind::MarkMessageSent
+            pending.target_owner_pubkey_hex.as_deref() != Some(pending.owner_pubkey_hex.as_str())
                 && pending.chat_id.as_deref() == Some(chat_id)
-                && pending.message_id.as_deref() == Some(message_id)
+                && pending.inner_event_id.as_deref() == Some(message_id)
         });
         let queued_protocol = self
             .protocol_engine
@@ -1960,15 +1965,14 @@ fn summarize_group_send_effect_targets(effects: &[ProtocolEffect]) -> String {
         let ProtocolEffect::Publish(publish) = effect else {
             continue;
         };
-        let stage = if publish.target_owner_pubkey_hex.is_some()
-            || publish.target_device_id.is_some()
-        {
-            "targeted"
-        } else if publish.success_action_kind == ProtocolPublishSuccessActionKind::MarkMessageSent {
-            "mark_sent"
-        } else {
-            "signed"
-        };
+        let stage =
+            if publish.target_owner_pubkey_hex.is_some() || publish.target_device_id.is_some() {
+                "targeted"
+            } else if publish.chat_id.is_some() && publish.inner_event_id.is_some() {
+                "mark_sent"
+            } else {
+                "signed"
+            };
         targets.push(format!(
             "{stage}:{}/{}:{}",
             publish.target_owner_pubkey_hex.as_deref().unwrap_or(""),
