@@ -180,6 +180,8 @@ pub(super) struct PendingRelayPublish {
     pub(super) event_id: String,
     pub(super) label: String,
     pub(super) event_json: String,
+    #[serde(default)]
+    pub(super) success_action_kind: PendingRelayPublishSuccessActionKind,
     pub(super) inner_event_id: Option<String>,
     pub(super) target_owner_pubkey_hex: Option<String>,
     pub(super) target_device_id: Option<String>,
@@ -196,6 +198,15 @@ pub(super) struct PendingRelayPublishMessageRef {
     pub(super) message_id: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum PendingRelayPublishSuccessActionKind {
+    #[default]
+    None,
+    MarkMessageSent,
+    ReleaseFirstContactPayloads,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum PendingRelayPublishSuccessAction {
     None,
@@ -206,6 +217,43 @@ pub(super) enum PendingRelayPublishSuccessAction {
     ReleaseFirstContactPayloads,
 }
 
+impl PendingRelayPublishSuccessActionKind {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::MarkMessageSent => "mark_message_sent",
+            Self::ReleaseFirstContactPayloads => "release_first_contact_payloads",
+        }
+    }
+
+    pub(super) fn from_storage(value: &str) -> Self {
+        match value {
+            "mark_message_sent" => Self::MarkMessageSent,
+            "release_first_contact_payloads" => Self::ReleaseFirstContactPayloads,
+            _ => Self::None,
+        }
+    }
+
+    pub(super) fn from_publish_metadata(
+        owner_pubkey_hex: &str,
+        label: &str,
+        chat_id: Option<&str>,
+        message_id: Option<&str>,
+        target_owner_pubkey_hex: Option<&str>,
+    ) -> Self {
+        if label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL {
+            return Self::ReleaseFirstContactPayloads;
+        }
+        if target_owner_pubkey_hex == Some(owner_pubkey_hex) {
+            return Self::None;
+        }
+        if chat_id.is_some() && message_id.is_some() {
+            return Self::MarkMessageSent;
+        }
+        Self::None
+    }
+}
+
 impl PendingRelayPublish {
     pub(super) fn message_ref(&self) -> Option<PendingRelayPublishMessageRef> {
         Some(PendingRelayPublishMessageRef {
@@ -214,24 +262,22 @@ impl PendingRelayPublish {
         })
     }
 
-    pub(super) fn success_action(
-        &self,
-        local_owner_pubkey_hex: Option<&str>,
-    ) -> PendingRelayPublishSuccessAction {
-        if self.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL {
-            return PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads;
+    pub(super) fn success_action(&self) -> PendingRelayPublishSuccessAction {
+        match self.success_action_kind {
+            PendingRelayPublishSuccessActionKind::None => PendingRelayPublishSuccessAction::None,
+            PendingRelayPublishSuccessActionKind::MarkMessageSent => self
+                .message_ref()
+                .map(
+                    |message_ref| PendingRelayPublishSuccessAction::MarkMessageSent {
+                        message_ref,
+                        target_owner_pubkey_hex: self.target_owner_pubkey_hex.clone(),
+                    },
+                )
+                .unwrap_or(PendingRelayPublishSuccessAction::None),
+            PendingRelayPublishSuccessActionKind::ReleaseFirstContactPayloads => {
+                PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads
+            }
         }
-        if self.target_owner_pubkey_hex.as_deref() == local_owner_pubkey_hex {
-            return PendingRelayPublishSuccessAction::None;
-        }
-        self.message_ref()
-            .map(
-                |message_ref| PendingRelayPublishSuccessAction::MarkMessageSent {
-                    message_ref,
-                    target_owner_pubkey_hex: self.target_owner_pubkey_hex.clone(),
-                },
-            )
-            .unwrap_or(PendingRelayPublishSuccessAction::None)
     }
 
     pub(super) fn delays_first_contact_payload(&self) -> bool {

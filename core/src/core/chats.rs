@@ -874,16 +874,10 @@ impl AppCore {
     }
 
     pub(super) fn reconcile_outgoing_message_delivery(&mut self, chat_id: &str, message_id: &str) {
-        let local_owner = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| logged_in.owner_pubkey.to_hex());
         let pending_relay = self.pending_relay_publishes.values().any(|pending| {
-            matches!(
-                pending.success_action(local_owner.as_deref()),
-                PendingRelayPublishSuccessAction::MarkMessageSent { message_ref, .. }
-                    if message_ref.chat_id == chat_id && message_ref.message_id == message_id
-            )
+            pending.success_action_kind == PendingRelayPublishSuccessActionKind::MarkMessageSent
+                && pending.chat_id.as_deref() == Some(chat_id)
+                && pending.message_id.as_deref() == Some(message_id)
         });
         let queued_protocol = self
             .protocol_engine
