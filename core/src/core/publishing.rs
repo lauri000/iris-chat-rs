@@ -402,6 +402,9 @@ impl AppCore {
             self.sync_message_delivery_trace(&chat_id, &message_id);
             self.reconcile_outgoing_message_delivery(&chat_id, &message_id);
         }
+        if success {
+            self.reconcile_ready_outgoing_message_deliveries();
+        }
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();

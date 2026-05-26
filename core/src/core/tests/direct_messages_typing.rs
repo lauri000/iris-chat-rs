@@ -2232,7 +2232,6 @@ fn group_seen_receipt_sent_directly_to_author_updates_sender_copy() {
         Some(alice_owner.public_key().to_hex()),
         Some("group-outer".to_string()),
     );
-
     bob.mark_messages_seen(&chat_id, std::slice::from_ref(&message_id));
 
     let receipt_publishes = bob

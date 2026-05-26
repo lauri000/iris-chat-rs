@@ -803,7 +803,6 @@ impl AppCore {
                 self.push_debug_log("publish.runtime.queue", format!("load_failed={error}"));
             }
         }
-
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
         self.start_relay_status_watchers();

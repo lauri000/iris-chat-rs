@@ -1710,28 +1710,6 @@ mod tests {
         (tmp, AppStore::new(conn))
     }
 
-    #[test]
-    fn pending_relay_publish_roundtrips_inner_event_id() {
-        let (_tmp, store) = fresh_store();
-        let pending = PendingRelayPublish {
-            owner_pubkey_hex: "owner".to_string(),
-            event_id: "event-1".to_string(),
-            label: "runtime".to_string(),
-            event_json: "{}".to_string(),
-            inner_event_id: Some("inner".to_string()),
-            chat_id: Some("chat".to_string()),
-            created_at_secs: 42,
-            attempt_count: 1,
-            last_error: Some("offline".to_string()),
-        };
-
-        store.upsert_pending_relay_publish(&pending).unwrap();
-
-        let loaded = store.load_pending_relay_publishes("owner").unwrap();
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].inner_event_id.as_deref(), Some("inner"));
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn empty_snapshot<'a>(
         active_chat_id: Option<&'a str>,

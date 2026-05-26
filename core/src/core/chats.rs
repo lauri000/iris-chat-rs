@@ -542,6 +542,7 @@ impl AppCore {
                 );
                 self.process_protocol_engine_effects(result.effects);
                 self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
+                self.reconcile_outgoing_message_delivery(&normalized_chat_id, &result.message_id);
                 if !result.queued_targets.is_empty() {
                     self.handle_queued_protocol_targets("message.direct", &result.queued_targets);
                 }
@@ -649,6 +650,7 @@ impl AppCore {
                 );
                 self.process_protocol_engine_effects(result.effects);
                 self.sync_message_delivery_trace(chat_id, &message_id);
+                self.reconcile_outgoing_message_delivery(chat_id, &message_id);
                 if !result.queued_targets.is_empty() {
                     self.handle_queued_protocol_targets("message.group", &result.queued_targets);
                 }
@@ -820,7 +822,9 @@ impl AppCore {
         let queued_protocol = self
             .protocol_engine
             .as_ref()
-            .is_some_and(|protocol_engine| protocol_engine.has_queued_message_work(message_id));
+            .is_some_and(|protocol_engine| {
+                protocol_engine.has_delivery_blocking_message_work(message_id)
+            });
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
@@ -855,6 +859,31 @@ impl AppCore {
                 recipient.delivery = DeliveryState::Sent;
                 recipient.updated_at_secs = now;
             }
+        }
+    }
+
+    pub(super) fn reconcile_ready_outgoing_message_deliveries(&mut self) {
+        let message_refs = self
+            .threads
+            .iter()
+            .flat_map(|(chat_id, thread)| {
+                thread.messages.iter().filter_map(|message| {
+                    if message.is_outgoing
+                        && matches!(
+                            message.delivery,
+                            DeliveryState::Pending | DeliveryState::Queued
+                        )
+                    {
+                        Some((chat_id.clone(), message.id.clone()))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for (chat_id, message_id) in message_refs {
+            self.reconcile_outgoing_message_delivery(&chat_id, &message_id);
         }
     }
 

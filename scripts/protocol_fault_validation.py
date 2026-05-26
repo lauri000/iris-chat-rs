@@ -672,7 +672,7 @@ class ProtocolFaultValidation:
         case_dir: Path,
         source_device_id: str,
         *,
-        target_device_id: str | None = None,
+        peer_device_id: str | None = None,
         pairwise_only: bool = False,
         group_sender_outer_only: bool = False,
         suffix: str = "pending",
@@ -686,16 +686,8 @@ class ProtocolFaultValidation:
             "--format",
             "json",
         ]
-        if target_device_id:
-            target = self.device(target_device_id)
-            command.extend(
-                [
-                    "--target-owner-hex",
-                    target["owner_hex"],
-                    "--target-device-hex",
-                    target["device_hex"],
-                ]
-            )
+        if peer_device_id:
+            self.device(peer_device_id)
         if pairwise_only:
             command.append("--pairwise-only")
         if group_sender_outer_only:
@@ -835,7 +827,7 @@ class ProtocolFaultValidation:
         rows = self.pending_rows(
             case_dir,
             "alice1",
-            target_device_id="bob1",
+            peer_device_id="bob1",
             pairwise_only=True,
             suffix="bob-pending-before-drop",
         )
@@ -947,7 +939,7 @@ class ProtocolFaultValidation:
         rows = self.pending_rows(
             case_dir,
             "alice1",
-            target_device_id="bob1",
+            peer_device_id="bob1",
             pairwise_only=True,
             suffix="bob-pending-after-remove",
         )
@@ -1118,7 +1110,7 @@ class ProtocolFaultValidation:
         rows = self.pending_rows(
             case_dir,
             "alice1",
-            target_device_id="carol1",
+            peer_device_id="carol1",
             pairwise_only=True,
             suffix="carol-pending-after-post-add-rotation",
         )
@@ -1187,7 +1179,7 @@ class ProtocolFaultValidation:
         rows = self.pending_rows(
             case_dir,
             "alice1",
-            target_device_id="bob1",
+            peer_device_id="bob1",
             pairwise_only=True,
             suffix="bob-removal-pending",
         )
