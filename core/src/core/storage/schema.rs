@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 26;
+const SCHEMA_VERSION: u32 = 24;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -131,6 +131,8 @@ CREATE TABLE IF NOT EXISTS pending_relay_publishes (
     owner_pubkey_hex TEXT NOT NULL,
     label TEXT NOT NULL,
     event_json TEXT NOT NULL,
+    success_action_kind TEXT NOT NULL DEFAULT 'none'
+        CHECK (success_action_kind IN ('none', 'mark_message_sent', 'release_first_contact_payloads')),
     inner_event_id TEXT,
     chat_id TEXT,
     created_at_secs INTEGER NOT NULL,
@@ -429,31 +431,31 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
             )?;
         }
     }
-    if current < 26 {
+    if current < 24 {
+        if !column_exists(&tx, "pending_relay_publishes", "success_action_kind")? {
+            tx.execute_batch(
+                "ALTER TABLE pending_relay_publishes
+                 ADD COLUMN success_action_kind TEXT NOT NULL DEFAULT 'none'
+                 CHECK (success_action_kind IN (
+                     'none',
+                     'mark_message_sent',
+                     'release_first_contact_payloads'
+                 ));",
+            )?;
+        }
         tx.execute_batch(
-            "DROP INDEX IF EXISTS pending_relay_publishes_owner_idx;
-             ALTER TABLE pending_relay_publishes RENAME TO pending_relay_publishes_old;
-             CREATE TABLE pending_relay_publishes (
-                 event_id TEXT PRIMARY KEY,
-                 owner_pubkey_hex TEXT NOT NULL,
-                 label TEXT NOT NULL,
-                 event_json TEXT NOT NULL,
-                 inner_event_id TEXT,
-                 chat_id TEXT,
-                 created_at_secs INTEGER NOT NULL,
-                 attempt_count INTEGER NOT NULL DEFAULT 0,
-                 last_error TEXT
-             );
-             INSERT INTO pending_relay_publishes(
-                 event_id, owner_pubkey_hex, label, event_json, inner_event_id,
-                 chat_id, created_at_secs, attempt_count, last_error
-             )
-             SELECT event_id, owner_pubkey_hex, label, event_json, inner_event_id,
-                    chat_id, created_at_secs, attempt_count, last_error
-             FROM pending_relay_publishes_old;
-             DROP TABLE pending_relay_publishes_old;
-             CREATE INDEX IF NOT EXISTS pending_relay_publishes_owner_idx
-                 ON pending_relay_publishes(owner_pubkey_hex, created_at_secs);",
+            "UPDATE pending_relay_publishes
+             SET success_action_kind = CASE
+                 WHEN label = 'appcore-protocol-bootstrap'
+                     THEN 'release_first_contact_payloads'
+                 WHEN target_owner_pubkey_hex IS NOT NULL
+                      AND target_owner_pubkey_hex = owner_pubkey_hex
+                     THEN 'none'
+                 WHEN chat_id IS NOT NULL
+                      AND message_id IS NOT NULL
+                     THEN 'mark_message_sent'
+                 ELSE 'none'
+             END;",
         )?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
@@ -693,6 +695,72 @@ mod tests {
             )
             .unwrap();
         assert_eq!(row, (None, Some("Alice".to_string())));
+    }
+
+    #[test]
+    fn migrates_v23_pending_relay_publish_success_action_kind() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE pending_relay_publishes (
+                event_id TEXT PRIMARY KEY,
+                owner_pubkey_hex TEXT NOT NULL,
+                label TEXT NOT NULL,
+                event_json TEXT NOT NULL,
+                inner_event_id TEXT,
+                target_owner_pubkey_hex TEXT,
+                target_device_id TEXT,
+                message_id TEXT,
+                chat_id TEXT,
+                created_at_secs INTEGER NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT
+            );
+            INSERT INTO pending_relay_publishes(
+                event_id, owner_pubkey_hex, label, event_json, inner_event_id,
+                target_owner_pubkey_hex, target_device_id, message_id, chat_id,
+                created_at_secs, attempt_count, last_error
+            ) VALUES
+                ('bootstrap', 'local', 'appcore-protocol-bootstrap', '{}', NULL, 'peer', NULL, 'm1', 'c1', 1, 0, NULL),
+                ('local', 'local', 'appcore-protocol', '{}', NULL, 'local', NULL, 'm2', 'c2', 2, 0, NULL),
+                ('peer', 'local', 'appcore-protocol', '{}', NULL, 'peer', NULL, 'm3', 'c3', 3, 0, NULL),
+                ('metadata-less', 'local', 'app-keys', '{}', NULL, NULL, NULL, NULL, NULL, 4, 0, NULL);
+            PRAGMA user_version = 23;
+            "#,
+        )
+        .unwrap();
+
+        ensure_schema(&mut conn).unwrap();
+
+        assert_eq!(user_version(&conn), SCHEMA_VERSION);
+        assert!(connection_column_exists(
+            &conn,
+            "pending_relay_publishes",
+            "success_action_kind"
+        ));
+        let rows: Vec<(String, String)> = conn
+            .prepare(
+                "SELECT event_id, success_action_kind
+                 FROM pending_relay_publishes
+                 ORDER BY event_id",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "bootstrap".to_string(),
+                    "release_first_contact_payloads".to_string()
+                ),
+                ("local".to_string(), "none".to_string()),
+                ("metadata-less".to_string(), "none".to_string()),
+                ("peer".to_string(), "mark_message_sent".to_string()),
+            ]
+        );
     }
 
     fn user_version(conn: &Connection) -> u32 {

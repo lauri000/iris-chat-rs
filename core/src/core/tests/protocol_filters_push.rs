@@ -1026,11 +1026,15 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
 fn pending_relay_publish_success_action_ignores_local_device_targets() {
     let local_owner = "local-owner".to_string();
     let peer_owner = "peer-owner".to_string();
-    let pending = |label: &str, target_owner_pubkey_hex: Option<String>| PendingRelayPublish {
+    let pending = |success_action_kind: PendingRelayPublishSuccessActionKind,
+                   target_owner_pubkey_hex: Option<String>|
+     -> PendingRelayPublish {
+        PendingRelayPublish {
         owner_pubkey_hex: local_owner.clone(),
-        event_id: format!("{label}-event"),
-        label: label.to_string(),
+        event_id: format!("{}-event", success_action_kind.as_str()),
+        label: "test".to_string(),
         event_json: "{}".to_string(),
+        success_action_kind,
         inner_event_id: Some("inner".to_string()),
         target_owner_pubkey_hex,
         target_device_id: Some("device".to_string()),
@@ -1039,19 +1043,61 @@ fn pending_relay_publish_success_action_ignores_local_device_targets() {
         created_at_secs: 1,
         attempt_count: 0,
         last_error: None,
+        }
     };
 
     assert_eq!(
-        pending("test", Some(local_owner.clone())).success_action(Some(local_owner.as_str())),
+        PendingRelayPublishSuccessActionKind::from_publish_metadata(
+            &local_owner,
+            "test",
+            Some("chat-1"),
+            Some("message-1"),
+            Some(&local_owner),
+        ),
+        PendingRelayPublishSuccessActionKind::None
+    );
+    assert_eq!(
+        pending(
+            PendingRelayPublishSuccessActionKind::None,
+            Some(local_owner.clone())
+        )
+        .success_action(),
         PendingRelayPublishSuccessAction::None
     );
     assert_eq!(
-        pending(APPCORE_PROTOCOL_BOOTSTRAP_LABEL, Some(local_owner.clone()))
-            .success_action(Some(local_owner.as_str())),
+        PendingRelayPublishSuccessActionKind::from_publish_metadata(
+            &local_owner,
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
+            Some("chat-1"),
+            Some("message-1"),
+            Some(&local_owner),
+        ),
+        PendingRelayPublishSuccessActionKind::ReleaseFirstContactPayloads
+    );
+    assert_eq!(
+        pending(
+            PendingRelayPublishSuccessActionKind::ReleaseFirstContactPayloads,
+            Some(local_owner.clone())
+        )
+        .success_action(),
         PendingRelayPublishSuccessAction::ReleaseFirstContactPayloads
     );
     assert_eq!(
-        pending("test", Some(peer_owner.clone())).success_action(Some(local_owner.as_str())),
+        PendingRelayPublishSuccessActionKind::from_publish_metadata(
+            &local_owner,
+            "test",
+            Some("chat-1"),
+            Some("message-1"),
+            Some(&peer_owner),
+        ),
+        PendingRelayPublishSuccessActionKind::MarkMessageSent
+    );
+    assert_eq!(
+        pending(
+            PendingRelayPublishSuccessActionKind::MarkMessageSent,
+            Some(peer_owner.clone())
+        )
+        .success_action(),
         PendingRelayPublishSuccessAction::MarkMessageSent {
             message_ref: PendingRelayPublishMessageRef {
                 chat_id: "chat-1".to_string(),
@@ -1091,6 +1137,7 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
             event_id: local_event_id.clone(),
             label: "test".to_string(),
             event_json: serde_json::to_string(&local_event).expect("event json"),
+            success_action_kind: PendingRelayPublishSuccessActionKind::None,
             inner_event_id: Some(message_id.clone()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: local_event.created_at.as_secs(),
@@ -1156,6 +1203,7 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
             event_id: lingering_local_event_id.clone(),
             label: "test".to_string(),
             event_json: serde_json::to_string(&lingering_local_event).expect("event json"),
+            success_action_kind: PendingRelayPublishSuccessActionKind::None,
             inner_event_id: Some(message_id.clone()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: lingering_local_event.created_at.as_secs(),
@@ -1164,6 +1212,28 @@ fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
         },
     );
 
+    let peer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "peer")
+        .sign_with_keys(&device)
+        .expect("peer event");
+    let peer_event_id = peer_event.id.to_string();
+    core.pending_relay_publishes.insert(
+        peer_event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: peer_event_id.clone(),
+            label: "test".to_string(),
+            event_json: serde_json::to_string(&peer_event).expect("event json"),
+            success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
+            inner_event_id: Some(message_id.clone()),
+            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+            target_device_id: Some(peer.public_key().to_hex()),
+            message_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            created_at_secs: peer_event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        },
+    );
     core.handle_relay_publish_finished(
         peer_event_id,
         true,
@@ -1246,7 +1316,12 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
             event_id: bootstrap_event_id.clone(),
             label: APPCORE_PROTOCOL_LABEL.to_string(),
             event_json: serde_json::to_string(&bootstrap_event).expect("event json"),
-            inner_event_id: None,
+            success_action_kind:
+                PendingRelayPublishSuccessActionKind::ReleaseFirstContactPayloads,
+            inner_event_id: Some(message_id.clone()),
+            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+            target_device_id: None,
+            message_id: Some(message_id.clone()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: bootstrap_event.created_at.as_secs(),
             attempt_count: 0,
@@ -1265,6 +1340,7 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
             event_id: payload_event_id.clone(),
             label: APPCORE_PROTOCOL_LABEL.to_string(),
             event_json: serde_json::to_string(&payload_event).expect("event json"),
+            success_action_kind: PendingRelayPublishSuccessActionKind::MarkMessageSent,
             inner_event_id: Some(message_id.clone()),
             chat_id: Some(chat_id.clone()),
             created_at_secs: payload_event.created_at.as_secs(),
