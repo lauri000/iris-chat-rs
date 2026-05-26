@@ -216,9 +216,7 @@ impl ProtocolEngine {
         );
         let mut event_ids = Vec::new();
         let mut effects = Vec::new();
-        let chat_id = inner_event_id
-            .as_ref()
-            .map(|_| group_chat_id(&prepared.group_id));
+        let chat_id = group_chat_id(&prepared.group_id);
         effects.extend(protocol_effects_from_group_prepared_publish(
             &prepared.local_sibling,
             inner_event_id.clone(),
@@ -265,7 +263,7 @@ impl ProtocolEngine {
         let mut effects = protocol_effects_from_group_prepared_publish(
             &prepared,
             None,
-            None,
+            group_chat_id(&group.group_id),
             &mut event_ids,
         )?;
         let mut queued_targets = self.queued_group_targets();

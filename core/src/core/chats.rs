@@ -639,8 +639,7 @@ impl AppCore {
                         matches!(
                             effect,
                             ProtocolEffect::Publish(publish)
-                                if publish.chat_id.is_some()
-                                    && publish.inner_event_id.is_some()
+                                if publish.inner_event_id.is_some()
                                     && publish.target_owner_pubkey_hex.as_deref() != local_owner_hex.as_deref()
                         )
                     })
@@ -1809,7 +1808,7 @@ fn summarize_group_send_effect_targets(effects: &[ProtocolEffect]) -> String {
         let stage =
             if publish.target_owner_pubkey_hex.is_some() || publish.target_device_id.is_some() {
                 "targeted"
-            } else if publish.chat_id.is_some() && publish.inner_event_id.is_some() {
+            } else if publish.inner_event_id.is_some() {
                 "mark_sent"
             } else {
                 "signed"

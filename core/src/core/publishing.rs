@@ -35,7 +35,7 @@ impl AppCore {
         self.publish_runtime_event_with_metadata(
             publish.event,
             APPCORE_PROTOCOL_LABEL,
-            publish.chat_id,
+            Some(publish.chat_id),
             publish.inner_event_id,
             publish.target_owner_pubkey_hex,
             publish.target_device_id,
@@ -394,26 +394,28 @@ impl AppCore {
         self.pending_relay_publish_inflight.remove(&event_id);
         self.push_debug_log("publish.runtime", detail.clone());
         let pending = self.pending_relay_publishes.get(&event_id).cloned();
-        let success_action = pending
-            .as_ref()
-            .map(PendingRelayPublish::success_action)
-            .unwrap_or(PendingRelayPublishSuccessAction::None);
-        let message_ref = pending.as_ref().and_then(PendingRelayPublish::message_ref);
+        let message_ref = pending.as_ref().and_then(|pending| {
+            Some((
+                pending.chat_id.clone()?,
+                pending.inner_event_id.clone()?,
+                pending.target_owner_pubkey_hex.clone(),
+            ))
+        });
         let mut should_retry = false;
         if success {
             self.forget_pending_relay_publish(&event_id);
-            match &success_action {
-                PendingRelayPublishSuccessAction::MarkMessageSent {
-                    message_ref,
-                    target_owner_pubkey_hex,
-                } => {
+            if let Some((chat_id, message_id, target_owner_pubkey_hex)) = message_ref.as_ref() {
+                let targets_local_owner = pending.as_ref().is_some_and(|pending| {
+                    pending.target_owner_pubkey_hex.as_deref()
+                        == Some(pending.owner_pubkey_hex.as_str())
+                });
+                if !targets_local_owner {
                     self.mark_message_publish_succeeded(
-                        &message_ref.chat_id,
-                        &message_ref.message_id,
+                        chat_id,
+                        message_id,
                         target_owner_pubkey_hex.as_deref(),
                     );
                 }
-                PendingRelayPublishSuccessAction::None => {}
             }
         } else if let Some(pending) = self.pending_relay_publishes.get_mut(&event_id) {
             pending.attempt_count = pending.attempt_count.saturating_add(1);
@@ -423,23 +425,19 @@ impl AppCore {
             }
             should_retry = true;
         }
-        if let Some(message_ref) = message_ref {
+        if let Some((chat_id, message_id, _)) = message_ref {
             for relay_url in &relay_urls {
                 self.add_message_transport_channel(
-                    &message_ref.chat_id,
-                    &message_ref.message_id,
+                    &chat_id,
+                    &message_id,
                     &format!("message server: {relay_url}"),
                 );
             }
             if !success {
-                self.update_message_delivery(
-                    &message_ref.chat_id,
-                    &message_ref.message_id,
-                    DeliveryState::Queued,
-                );
+                self.update_message_delivery(&chat_id, &message_id, DeliveryState::Queued);
             }
-            self.sync_message_delivery_trace(&message_ref.chat_id, &message_ref.message_id);
-            self.reconcile_outgoing_message_delivery(&message_ref.chat_id, &message_ref.message_id);
+            self.sync_message_delivery_trace(&chat_id, &message_id);
+            self.reconcile_outgoing_message_delivery(&chat_id, &message_id);
         }
         self.rebuild_state();
         self.persist_best_effort();
