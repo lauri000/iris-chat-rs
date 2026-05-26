@@ -583,14 +583,14 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
     let payload_id = payload.id.to_string();
     let bootstrap_publish = ProtocolPublish {
         event: bootstrap,
-        chat_id: None,
+        chat_id: chat_id.clone(),
         inner_event_id: None,
         target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
         target_device_id: None,
     };
     let payload_publish = ProtocolPublish {
         event: payload,
-        chat_id: Some(chat_id.clone()),
+        chat_id: chat_id.clone(),
         inner_event_id: Some(message_id.clone()),
         target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
         target_device_id: Some(peer.public_key().to_hex()),
@@ -611,8 +611,9 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
     assert!(
         core.pending_relay_publishes
             .values()
-            .any(|pending| pending.inner_event_id.is_none() && pending.chat_id.is_none()),
-        "bootstrap should be durable without message delivery metadata"
+            .any(|pending| pending.inner_event_id.is_none()
+                && pending.chat_id.as_deref() == Some(chat_id.as_str())),
+        "bootstrap should be durable with chat context but without message delivery metadata"
     );
 }
 
@@ -1080,14 +1081,14 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
 
     assert!(core.publish_protocol_event(ProtocolPublish {
         event: first,
-        chat_id: Some(chat_id.clone()),
+        chat_id: chat_id.clone(),
         inner_event_id: Some(message_id.clone()),
         target_owner_pubkey_hex: Some(chat_id.clone()),
         target_device_id: Some(target_device_id.clone()),
     }));
     assert!(core.publish_protocol_event(ProtocolPublish {
         event: second,
-        chat_id: Some(chat_id.clone()),
+        chat_id: chat_id.clone(),
         inner_event_id: Some(message_id),
         target_owner_pubkey_hex: Some(chat_id),
         target_device_id: Some(target_device_id),

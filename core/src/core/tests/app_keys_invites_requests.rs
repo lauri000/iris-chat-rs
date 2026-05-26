@@ -2267,7 +2267,7 @@ fn queued_runtime_publish_registration_persists_inner_message_id() {
     let event_id = outer_event.id.to_string();
     assert!(core.publish_protocol_event(ProtocolPublish {
         event: outer_event,
-        chat_id: Some(chat_id.clone()),
+        chat_id: chat_id.clone(),
         inner_event_id: Some(inner_message_id.clone()),
         target_owner_pubkey_hex: Some(chat_id.clone()),
         target_device_id: Some(peer.public_key().to_hex()),

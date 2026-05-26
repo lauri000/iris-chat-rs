@@ -1,7 +1,7 @@
 fn protocol_effects_from_prepared(
     prepared: &PreparedSend,
     inner_event_id: Option<String>,
-    chat_id: Option<String>,
+    chat_id: String,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
     let mut publishes = Vec::new();
@@ -9,7 +9,7 @@ fn protocol_effects_from_prepared(
         let event = invite_response_event(response)?;
         bootstrap.push(ProtocolPublish {
             event,
-            chat_id: None,
+            chat_id: chat_id.clone(),
             inner_event_id: None,
             target_owner_pubkey_hex: target_owner_pubkey_hex.clone(),
             target_device_id: None,
@@ -33,7 +33,7 @@ fn protocol_effects_from_prepared(
 fn protocol_effects_from_group_prepared_publish(
     prepared: &GroupPreparedPublish,
     inner_event_id: Option<String>,
-    chat_id: Option<String>,
+    chat_id: String,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
     let mut publishes = Vec::new();
@@ -41,7 +41,7 @@ fn protocol_effects_from_group_prepared_publish(
         let event = invite_response_event(response)?;
         bootstrap.push(ProtocolPublish {
             event,
-            chat_id: None,
+            chat_id: chat_id.clone(),
             inner_event_id: None,
             target_owner_pubkey_hex: None,
             target_device_id: None,
@@ -64,7 +64,7 @@ fn protocol_effects_from_group_prepared_publish(
         event_ids.push(event.id.to_string());
         payload.push(ProtocolPublish {
             event,
-            chat_id: None,
+            chat_id: chat_id.clone(),
             inner_event_id: None,
             target_owner_pubkey_hex: None,
             target_device_id: None,

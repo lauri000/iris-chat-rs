@@ -351,7 +351,7 @@ impl ProtocolEngine {
                 effects.extend(protocol_effects_from_prepared(
                     &remote,
                     pending.inner_event_id.clone(),
-                    Some(pending.chat_id.clone()),
+                    pending.chat_id.clone(),
                     &mut event_ids,
                 )?);
             }
@@ -373,7 +373,7 @@ impl ProtocolEngine {
                     effects.extend(protocol_effects_from_prepared(
                         &local,
                         pending.inner_event_id.clone(),
-                        Some(pending.chat_id.clone()),
+                        pending.chat_id.clone(),
                         &mut event_ids,
                     )?);
                 }
@@ -754,8 +754,7 @@ impl ProtocolEngine {
             };
             let still_has_gap = !prepared.relay_gaps.is_empty();
             let mut event_ids = Vec::new();
-            let message_id = pending.inner_event_id.clone();
-            let chat_id = message_id.as_ref().map(|_| group_chat_id(&pending.group_id));
+            let chat_id = group_chat_id(&pending.group_id);
             effects.extend(protocol_effects_from_group_prepared_publish(
                 &prepared,
                 pending.inner_event_id.clone(),

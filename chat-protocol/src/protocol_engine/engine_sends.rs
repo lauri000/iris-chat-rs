@@ -204,7 +204,6 @@ impl ProtocolEngine {
             self.send_direct_unsigned_event(invite_owner, &invite_owner.to_hex(), typing, now)?;
         for effect in &mut bootstrap.effects {
             if let ProtocolEffect::Publish(publish) = effect {
-                publish.chat_id = None;
                 publish.inner_event_id = None;
             }
         }
@@ -628,7 +627,7 @@ impl ProtocolEngine {
         let mut effects = protocol_effects_from_prepared(
             &remote,
             inner_event_id.clone(),
-            Some(chat_id.to_string()),
+            chat_id.to_string(),
             &mut event_ids,
         )?;
 
@@ -696,7 +695,7 @@ impl ProtocolEngine {
         let mut effects = protocol_effects_from_prepared(
             &local,
             inner_event_id.clone(),
-            Some(chat_id.to_string()),
+            chat_id.to_string(),
             &mut event_ids,
         )?;
 
@@ -769,13 +768,13 @@ impl ProtocolEngine {
         effects.extend(protocol_effects_from_prepared(
             &remote,
             inner_event_id.clone(),
-            Some(chat_id.to_string()),
+            chat_id.to_string(),
             &mut event_ids,
         )?);
         effects.extend(protocol_effects_from_prepared(
             &local,
             inner_event_id.clone(),
-            Some(chat_id.to_string()),
+            chat_id.to_string(),
             &mut event_ids,
         )?);
 

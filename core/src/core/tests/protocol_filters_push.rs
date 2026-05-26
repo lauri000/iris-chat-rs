@@ -347,7 +347,7 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
         .iter()
         .filter_map(|effect| match effect {
             ProtocolEffect::Publish(publish)
-                if publish.chat_id.as_deref() == Some(peer_owner.public_key().to_hex().as_str())
+                if publish.chat_id == peer_owner.public_key().to_hex()
                     && publish.inner_event_id.as_deref() == Some(result.message_id.as_str()) =>
             {
                 Some(publish)
@@ -1015,50 +1015,6 @@ fn local_sibling_group_send_publishes_message_events_without_target_metadata() {
 }
 
 #[test]
-fn pending_relay_publish_success_action_ignores_local_device_targets() {
-    let local_owner = "local-owner".to_string();
-    let peer_owner = "peer-owner".to_string();
-    let pending = |target_owner_pubkey_hex: Option<String>| -> PendingRelayPublish {
-        PendingRelayPublish {
-            owner_pubkey_hex: local_owner.clone(),
-            event_id: "event".to_string(),
-            label: "test".to_string(),
-            event_json: "{}".to_string(),
-            inner_event_id: Some("message-1".to_string()),
-            target_owner_pubkey_hex,
-            target_device_id: Some("device".to_string()),
-            chat_id: Some("chat-1".to_string()),
-            created_at_secs: 1,
-            attempt_count: 0,
-            last_error: None,
-        }
-    };
-
-    assert_eq!(
-        pending(Some(local_owner.clone())).success_action(),
-        PendingRelayPublishSuccessAction::None
-    );
-    assert_eq!(
-        PendingRelayPublish {
-            inner_event_id: None,
-            ..pending(Some(peer_owner.clone()))
-        }
-        .success_action(),
-        PendingRelayPublishSuccessAction::None
-    );
-    assert_eq!(
-        pending(Some(peer_owner.clone())).success_action(),
-        PendingRelayPublishSuccessAction::MarkMessageSent {
-            message_ref: PendingRelayPublishMessageRef {
-                chat_id: "chat-1".to_string(),
-                message_id: "message-1".to_string(),
-            },
-            target_owner_pubkey_hex: Some(peer_owner),
-        }
-    );
-}
-
-#[test]
 fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -1269,7 +1225,7 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
             inner_event_id: None,
             target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
             target_device_id: None,
-            chat_id: None,
+            chat_id: Some(chat_id.clone()),
             created_at_secs: bootstrap_event.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,

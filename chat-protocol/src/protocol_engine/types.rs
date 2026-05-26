@@ -47,7 +47,7 @@ struct ProtocolEnginePersistedState {
 #[derive(Clone, Debug)]
 pub struct ProtocolPublish {
     pub event: Event,
-    pub chat_id: Option<String>,
+    pub chat_id: String,
     pub inner_event_id: Option<String>,
 }
 
