@@ -762,6 +762,8 @@ class Scenario:
             str(limit),
             "--drop-file",
             str(self.relay_config()["drop_file"]),
+            "--chat-id",
+            peer["owner_hex"],
         ]
         if pairwise_only:
             args.insert(5, "--pairwise-only")

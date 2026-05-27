@@ -108,6 +108,7 @@ fn protocol_targeted_payload_count(effects: &[ProtocolEffect], _owner_pubkey_hex
 
 include!("tests/protocol_runtime.rs");
 include!("tests/protocol_runtime_replay.rs");
+include!("tests/retry_publish_ordering.rs");
 include!("tests/protocol_filters_push.rs");
 include!("tests/app_keys_invites_requests.rs");
 include!("tests/first_contact_receiver.rs");
