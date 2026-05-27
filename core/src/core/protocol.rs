@@ -122,16 +122,20 @@ impl AppCore {
         let mut published = 0usize;
         let mut queued_targets = Vec::new();
         let mut direct_effects = Vec::new();
+        let mut direct_message_refs = Vec::new();
         for result in batch.direct_results {
             published = published.saturating_add(result.event_ids.len());
             queued_targets.extend(result.queued_targets.clone());
             direct_effects.extend(result.effects);
-            self.sync_message_delivery_trace(&result.chat_id, &result.message_id);
-            self.reconcile_outgoing_message_delivery(&result.chat_id, &result.message_id);
+            direct_message_refs.push((result.chat_id, result.message_id));
         }
         queued_targets.extend(batch.group_result.queued_targets.clone());
         normalize_protocol_queued_targets(&mut queued_targets);
         self.process_protocol_engine_effects(direct_effects);
+        for (chat_id, message_id) in direct_message_refs {
+            self.sync_message_delivery_trace(&chat_id, &message_id);
+            self.reconcile_outgoing_message_delivery(&chat_id, &message_id);
+        }
         for group_event in batch.group_result.events {
             self.apply_group_decrypted_event(group_event);
         }

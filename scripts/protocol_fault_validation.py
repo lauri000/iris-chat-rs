@@ -805,7 +805,7 @@ class ProtocolFaultValidation(ProtocolFaultCasesMixin):
             "json",
         ]
         if peer_device_id:
-            self.device(peer_device_id)
+            command.extend(["--chat-id", self.device(peer_device_id)["owner_hex"]])
         if pairwise_only:
             command.append("--pairwise-only")
         if group_sender_outer_only:
