@@ -147,6 +147,43 @@ fn appcore_direct_message_event_with_author_keys_for_test(
     body: &str,
     created_at_secs: u64,
 ) -> (Event, Keys) {
+    let (content, _) = runtime_rumor_json(
+        sender_keys.public_key(),
+        CHAT_MESSAGE_KIND,
+        body,
+        created_at_secs,
+        Vec::new(),
+    );
+    let mut rumor: UnsignedEvent = serde_json::from_str(&content).expect("message rumor");
+    appcore_direct_unsigned_event_with_author_keys_for_test(
+        receiver_engine,
+        sender_keys,
+        &mut rumor,
+        created_at_secs,
+    )
+}
+
+fn appcore_direct_unsigned_event_for_test(
+    receiver_engine: &mut ProtocolEngine,
+    sender_keys: &Keys,
+    rumor: &mut UnsignedEvent,
+    created_at_secs: u64,
+) -> Event {
+    appcore_direct_unsigned_event_with_author_keys_for_test(
+        receiver_engine,
+        sender_keys,
+        rumor,
+        created_at_secs,
+    )
+    .0
+}
+
+fn appcore_direct_unsigned_event_with_author_keys_for_test(
+    receiver_engine: &mut ProtocolEngine,
+    sender_keys: &Keys,
+    rumor: &mut UnsignedEvent,
+    created_at_secs: u64,
+) -> (Event, Keys) {
     let invite = receiver_engine
         .local_invite()
         .expect("receiver local invite");
@@ -163,15 +200,10 @@ fn appcore_direct_message_event_with_author_keys_for_test(
         .observe_invite_response_event(&response_event)
         .expect("receiver observes invite response");
 
-    let (content, _) = runtime_rumor_json(
-        sender_keys.public_key(),
-        CHAT_MESSAGE_KIND,
-        body,
-        created_at_secs,
-        Vec::new(),
-    );
+    rumor.ensure_id();
+    let payload = serde_json::to_vec(rumor).expect("rumor json");
     let plan = sender_session
-        .plan_send(content.as_bytes(), NdrUnixSeconds(created_at_secs))
+        .plan_send(&payload, NdrUnixSeconds(created_at_secs))
         .expect("sender plans message");
     let sent = sender_session.apply_send(plan);
     let author_keys = Keys::new(

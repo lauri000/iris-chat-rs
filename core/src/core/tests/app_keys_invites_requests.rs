@@ -1516,9 +1516,6 @@ fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_back
     let bob_keys = Keys::generate();
     let mallory_keys = Keys::generate();
     let carol_keys = Keys::generate();
-    let alice_session_state = established_peer_session_state_for_test(&alice_keys, &bob_keys);
-    let message_event = unrelated_direct_message_event_for_test(&mallory_keys, &carol_keys);
-    let message_event_id = message_event.id.to_string();
 
     let mut core = logged_in_test_core("pending-inbound-keeps-bootstrap", &bob_keys, &bob_keys);
     core.active_chat_id = Some(alice_keys.public_key().to_hex());
@@ -1534,16 +1531,24 @@ fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_back
         alice_keys.public_key().to_hex(),
         known_app_keys_from_ndr(alice_keys.public_key(), &alice_app_keys, 1),
     );
-    core.protocol_engine
+    let bob_engine = core
+        .protocol_engine
         .as_mut()
-        .expect("protocol engine")
-        .import_session_state(
+        .expect("protocol engine");
+    let bob_invite = bob_engine.local_invite().expect("bob local invite");
+    let (_alice_session, alice_response) = bob_invite
+        .accept_with_owner(
             alice_keys.public_key(),
+            alice_keys.secret_key().to_secret_bytes(),
             Some(alice_keys.public_key().to_hex()),
-            alice_session_state,
-            UnixSeconds(2),
+            Some(alice_keys.public_key()),
         )
-        .expect("alice session import");
+        .expect("alice accepts bob invite");
+    let alice_response_event = nostr_double_ratchet_nostr::invite_response_event(&alice_response)
+        .expect("alice invite response event");
+    bob_engine
+        .observe_invite_response_event(&alice_response_event)
+        .expect("bob observes alice invite response");
     assert!(
         !core
             .protocol_engine
@@ -1557,6 +1562,14 @@ fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_back
         !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
         "without pending inbound work the known peer no longer needs broad bootstrap"
     );
+    let mut carol_engine = test_protocol_engine(&carol_keys, &carol_keys);
+    let message_event = appcore_direct_message_event_for_test(
+        &mut carol_engine,
+        &mallory_keys,
+        "queued until unrelated protocol state arrives",
+        200,
+    );
+    let message_event_id = message_event.id.to_string();
     core.handle_relay_event(message_event);
     assert!(
         !core

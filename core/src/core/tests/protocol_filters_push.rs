@@ -1406,7 +1406,7 @@ fn appcore_hot_path_has_no_runtime_references() {
     collect_core_rs_files(&manifest.join("src/core"), &mut files);
 
     let forbidden = [
-        "NdrRuntime",
+        concat!("Ndr", "Runtime"),
         "ndr_runtime",
         "setup_user",
         "process_runtime_effects",
@@ -1989,6 +1989,61 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
     });
     let thread = core.threads.get(&chat_id).expect("sender thread after dup");
     assert_eq!(thread.messages.len(), 1, "duplicate push event is ignored");
+}
+
+#[test]
+fn mobile_push_decrypt_suppresses_typing_rumors() {
+    // Even with valid keys and a working ratchet, the notification
+    // extension should suppress non-chat-message rumors. Typing/seen/
+    // reaction wrappers are noise as standalone notifications — the
+    // chat list updates when the user opens the app.
+    let alice_keys = Keys::generate();
+    let bob_keys = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_path_buf();
+    let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        crate::core::storage::open_database(&data_dir).expect("bob db"),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+    let mut bob_engine = ProtocolEngine::load_or_create_for_local_device(
+        bob_storage,
+        bob_keys.public_key(),
+        &bob_keys,
+    )
+    .expect("bob protocol engine");
+    let mut typing_rumor = pairwise_codec::typing_event(
+        alice_keys.public_key(),
+        pairwise_codec::EncodeOptions::new(200, 0),
+    )
+    .expect("typing rumor");
+    let typing_event = appcore_direct_unsigned_event_for_test(
+        &mut bob_engine,
+        &alice_keys,
+        &mut typing_rumor,
+        200,
+    );
+    let payload = serde_json::json!({
+        "event": typing_event,
+        "title": "New message",
+        "body": "New activity",
+    })
+    .to_string();
+
+    let resolution = decrypt_mobile_push_notification(
+        data_dir.to_string_lossy().to_string(),
+        bob_keys.public_key().to_hex(),
+        bob_keys
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| bob_keys.secret_key().to_secret_hex()),
+        payload,
+    );
+
+    assert!(
+        !resolution.should_show,
+        "typing rumors must not surface as standalone notifications"
+    );
 }
 
 #[test]
