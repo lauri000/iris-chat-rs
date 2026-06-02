@@ -1,4 +1,4 @@
-use super::protocol::build_protocol_subscription_filters;
+use super::protocol_filters::build_protocol_subscription_filters;
 use super::*;
 
 const TEST_PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
@@ -105,6 +105,7 @@ fn protocol_targeted_payload_count(effects: &[ProtocolEffect], _owner_pubkey_hex
         .count()
 }
 
+include!("tests/protocol_runtime_helpers.rs");
 include!("tests/protocol_runtime.rs");
 include!("tests/protocol_runtime_replay.rs");
 include!("tests/retry_publish_ordering.rs");

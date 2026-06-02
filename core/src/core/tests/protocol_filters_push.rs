@@ -2017,7 +2017,7 @@ fn mobile_push_decrypt_suppresses_typing_rumors() {
         pairwise_codec::EncodeOptions::new(200, 0),
     )
     .expect("typing rumor");
-    let typing_event = appcore_direct_unsigned_event_for_test(
+    let typing_event = encrypted_direct_unsigned_event_for_push_test(
         &mut bob_engine,
         &alice_keys,
         &mut typing_rumor,

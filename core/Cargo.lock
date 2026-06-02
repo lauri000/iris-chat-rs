@@ -526,21 +526,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam-channel"
-version = "0.5.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
-name = "crossbeam-utils"
-version = "0.8.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
-
-[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1269,7 +1254,7 @@ dependencies = [
 
 [[package]]
 name = "iris-chat"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1307,7 +1292,7 @@ dependencies = [
 
 [[package]]
 name = "iris-chat-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -1555,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.147"
+version = "0.0.148"
 dependencies = [
  "base64",
  "hex",
@@ -1570,7 +1555,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet-nostr"
-version = "0.0.147"
+version = "0.0.148"
 dependencies = [
  "base64",
  "hex",
@@ -1585,7 +1570,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet-pairwise-codec"
-version = "0.0.147"
+version = "0.0.148"
 dependencies = [
  "nostr 0.44.2",
  "serde",
@@ -1595,22 +1580,12 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet-runtime"
-version = "0.0.147"
+version = "0.0.148"
 dependencies = [
- "base64",
- "crossbeam-channel",
  "flate2",
- "hex",
- "nostr 0.44.2",
  "nostr-double-ratchet",
- "nostr-double-ratchet-nostr",
- "nostr-double-ratchet-pairwise-codec",
- "rand 0.8.5",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
- "tracing",
- "urlencoding",
  "uuid",
 ]
 

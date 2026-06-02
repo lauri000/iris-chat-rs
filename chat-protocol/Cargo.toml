@@ -1,6 +1,6 @@
 [package]
 name = "iris-chat-protocol"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Reusable Iris Chat double-ratchet protocol engine"
 license = "MIT"
@@ -11,10 +11,10 @@ homepage = "https://iris.to"
 anyhow = "1"
 base64 = "0.22"
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
-nostr-double-ratchet = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
-nostr-double-ratchet-nostr = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-nostr" }
-nostr-double-ratchet-pairwise-codec = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-pairwise-codec" }
-nostr-double-ratchet-runtime = { version = "0.0.147", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-runtime" }
+nostr-double-ratchet = { version = "0.0.148", path = "../../nostr-double-ratchet-cleanup/rust/crates/nostr-double-ratchet" }
+nostr-double-ratchet-nostr = { version = "0.0.148", path = "../../nostr-double-ratchet-cleanup/rust/crates/nostr-double-ratchet-nostr" }
+nostr-double-ratchet-pairwise-codec = { version = "0.0.148", path = "../../nostr-double-ratchet-cleanup/rust/crates/nostr-double-ratchet-pairwise-codec" }
+nostr-double-ratchet-runtime = { version = "0.0.148", path = "../../nostr-double-ratchet-cleanup/rust/crates/nostr-double-ratchet-runtime" }
 rand = "0.8"
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
