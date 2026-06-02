@@ -4,11 +4,10 @@ fn protocol_effects_from_prepared(
     chat_id: String,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
-    let mut bootstrap = Vec::new();
-    let mut payload = Vec::new();
+    let mut publishes = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        bootstrap.push(ProtocolPublish {
+        publishes.push(ProtocolPublish {
             event,
             chat_id: chat_id.clone(),
             inner_event_id: None,
@@ -22,9 +21,9 @@ fn protocol_effects_from_prepared(
             chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
         };
-        payload.push(publish);
+        publishes.push(publish);
     }
-    Ok(protocol_publish_effects(bootstrap, payload))
+    Ok(publishes.into_iter().map(ProtocolEffect::Publish).collect())
 }
 
 fn protocol_effects_from_group_prepared_publish(
@@ -36,7 +35,7 @@ fn protocol_effects_from_group_prepared_publish(
     let mut publishes = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        bootstrap.push(ProtocolPublish {
+        publishes.push(ProtocolPublish {
             event,
             chat_id: chat_id.clone(),
             inner_event_id: None,
@@ -50,33 +49,18 @@ fn protocol_effects_from_group_prepared_publish(
             chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
         };
-        payload.push(publish);
+        publishes.push(publish);
     }
     for sender_key_message in &prepared.sender_key_messages {
         let event = group_sender_key_message_event(sender_key_message)?;
         event_ids.push(event.id.to_string());
-        payload.push(ProtocolPublish {
+        publishes.push(ProtocolPublish {
             event,
             chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
         });
     }
-    Ok(protocol_publish_effects(bootstrap, payload))
-}
-
-fn protocol_publish_effects(
-    bootstrap: Vec<ProtocolPublish>,
-    payload: Vec<ProtocolPublish>,
-) -> Vec<ProtocolEffect> {
-    let mut effects = Vec::with_capacity(bootstrap.len() + payload.len());
-    for publish in bootstrap.into_iter().chain(payload) {
-        effects.push(protocol_publish_effect(publish));
-    }
-    effects
-}
-
-fn protocol_publish_effect(publish: ProtocolPublish) -> ProtocolEffect {
-    ProtocolEffect::Publish(publish)
+    Ok(publishes.into_iter().map(ProtocolEffect::Publish).collect())
 }
 
 fn classify_group_pairwise_payload(payload: &[u8]) -> anyhow::Result<(bool, bool)> {
