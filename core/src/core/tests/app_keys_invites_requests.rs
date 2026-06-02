@@ -1515,100 +1515,6 @@ fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_back
     let bob_keys = Keys::generate();
     let mallory_keys = Keys::generate();
     let carol_keys = Keys::generate();
-    let mut alice_invite = Invite::create_new(
-        alice_keys.public_key(),
-        Some(alice_keys.public_key().to_hex()),
-        Some(1),
-    )
-    .expect("invite");
-    alice_invite.owner_public_key = Some(alice_keys.public_key());
-    let alice = NdrRuntime::new(
-        alice_keys.public_key(),
-        alice_keys.secret_key().to_secret_bytes(),
-        alice_keys.public_key().to_hex(),
-        alice_keys.public_key(),
-        None,
-        Some(alice_invite.clone()),
-    );
-    alice.init().expect("alice init");
-    let bob_runtime = NdrRuntime::new(
-        bob_keys.public_key(),
-        bob_keys.secret_key().to_secret_bytes(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key(),
-        None,
-        None,
-    );
-    bob_runtime.init().expect("bob init");
-    accept_invite_and_deliver(
-        &bob_runtime,
-        &bob_keys,
-        &alice_invite,
-        alice_keys.public_key(),
-        &alice,
-    );
-    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
-    let alice_session_state = bob_runtime
-        .get_message_push_session_states(alice_keys.public_key())
-        .into_iter()
-        .next()
-        .expect("Bob has Alice session")
-        .state;
-
-    let mut mallory_invite = Invite::create_new(
-        mallory_keys.public_key(),
-        Some(mallory_keys.public_key().to_hex()),
-        Some(1),
-    )
-    .expect("mallory invite");
-    mallory_invite.owner_public_key = Some(mallory_keys.public_key());
-    let mallory = NdrRuntime::new(
-        mallory_keys.public_key(),
-        mallory_keys.secret_key().to_secret_bytes(),
-        mallory_keys.public_key().to_hex(),
-        mallory_keys.public_key(),
-        None,
-        Some(mallory_invite.clone()),
-    );
-    mallory.init().expect("mallory init");
-    let carol_runtime = NdrRuntime::new(
-        carol_keys.public_key(),
-        carol_keys.secret_key().to_secret_bytes(),
-        carol_keys.public_key().to_hex(),
-        carol_keys.public_key(),
-        None,
-        None,
-    );
-    carol_runtime.init().expect("carol init");
-    accept_invite_and_deliver(
-        &carol_runtime,
-        &carol_keys,
-        &mallory_invite,
-        mallory_keys.public_key(),
-        &mallory,
-    );
-    complete_first_contact(
-        &carol_runtime,
-        &carol_keys,
-        mallory_keys.public_key(),
-        &mallory,
-    );
-    mallory
-        .send_text(
-            carol_keys.public_key(),
-            "queued until unrelated protocol state arrives".to_string(),
-            None,
-        )
-        .expect("mallory sends");
-    let carol_message_authors = carol_runtime.get_all_message_push_author_pubkeys();
-    let message_event = drain_signed_events(&mallory, &mallory_keys)
-        .into_iter()
-        .find(|event| {
-            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
-                && carol_message_authors.contains(&event.pubkey)
-        })
-        .expect("message event for Carol");
-    let message_event_id = message_event.id.to_string();
 
     let mut core = logged_in_test_core("pending-inbound-keeps-bootstrap", &bob_keys, &bob_keys);
     core.active_chat_id = Some(alice_keys.public_key().to_hex());
@@ -1624,16 +1530,24 @@ fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_back
         alice_keys.public_key().to_hex(),
         known_app_keys_from_ndr(alice_keys.public_key(), &alice_app_keys, 1),
     );
-    core.protocol_engine
+    let bob_engine = core
+        .protocol_engine
         .as_mut()
-        .expect("protocol engine")
-        .import_session_state(
+        .expect("protocol engine");
+    let bob_invite = bob_engine.local_invite().expect("bob local invite");
+    let (_alice_session, alice_response) = bob_invite
+        .accept_with_owner(
             alice_keys.public_key(),
+            alice_keys.secret_key().to_secret_bytes(),
             Some(alice_keys.public_key().to_hex()),
-            alice_session_state,
-            UnixSeconds(2),
+            Some(alice_keys.public_key()),
         )
-        .expect("alice session import");
+        .expect("alice accepts bob invite");
+    let alice_response_event = nostr_double_ratchet_nostr::invite_response_event(&alice_response)
+        .expect("alice invite response event");
+    bob_engine
+        .observe_invite_response_event(&alice_response_event)
+        .expect("bob observes alice invite response");
     assert!(
         !core
             .protocol_engine
@@ -1647,6 +1561,14 @@ fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_back
         !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
         "without pending inbound work the known peer no longer needs broad bootstrap"
     );
+    let mut carol_engine = test_protocol_engine(&carol_keys, &carol_keys);
+    let message_event = appcore_direct_message_event_for_test(
+        &mut carol_engine,
+        &mallory_keys,
+        "queued until unrelated protocol state arrives",
+        200,
+    );
+    let message_event_id = message_event.id.to_string();
     core.handle_relay_event(message_event);
     assert!(
         !core

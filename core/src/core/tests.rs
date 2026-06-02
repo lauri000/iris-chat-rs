@@ -1,6 +1,5 @@
 use super::protocol::build_protocol_subscription_filters;
 use super::*;
-use nostr_double_ratchet_runtime::{NdrRuntime, SessionManagerEvent};
 
 const TEST_PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
 

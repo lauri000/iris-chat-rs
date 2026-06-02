@@ -1406,7 +1406,7 @@ fn appcore_hot_path_has_no_runtime_references() {
     collect_core_rs_files(&manifest.join("src/core"), &mut files);
 
     let forbidden = [
-        "NdrRuntime",
+        concat!("Ndr", "Runtime"),
         "ndr_runtime",
         "setup_user",
         "process_runtime_effects",
@@ -1445,57 +1445,6 @@ fn collect_core_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathB
             files.push(path);
         }
     }
-}
-
-#[test]
-fn ndr_runtime_invite_session_round_trips_text() {
-    let alice_keys = Keys::generate();
-    let bob_keys = Keys::generate();
-
-    let mut invite = Invite::create_new(
-        alice_keys.public_key(),
-        Some(alice_keys.public_key().to_hex()),
-        Some(1),
-    )
-    .expect("invite");
-    invite.owner_public_key = Some(alice_keys.public_key());
-
-    let alice = NdrRuntime::new(
-        alice_keys.public_key(),
-        alice_keys.secret_key().to_secret_bytes(),
-        alice_keys.public_key().to_hex(),
-        alice_keys.public_key(),
-        None,
-        Some(invite.clone()),
-    );
-    alice.init().expect("alice init");
-
-    let bob = NdrRuntime::new(
-        bob_keys.public_key(),
-        bob_keys.secret_key().to_secret_bytes(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key(),
-        None,
-        None,
-    );
-    bob.init().expect("bob init");
-    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
-    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
-
-    alice
-        .send_text(bob_keys.public_key(), "hello bob".to_string(), None)
-        .expect("alice sends");
-    deliver_published_events(&alice, &alice_keys, &bob);
-    assert!(drain_text_messages(&bob)
-        .iter()
-        .any(|message| message == "hello bob"));
-
-    bob.send_text(alice_keys.public_key(), "hello alice".to_string(), None)
-        .expect("bob sends");
-    deliver_published_events(&bob, &bob_keys, &alice);
-    assert!(drain_text_messages(&alice)
-        .iter()
-        .any(|message| message == "hello alice"));
 }
 
 #[test]
@@ -2057,48 +2006,23 @@ fn mobile_push_decrypt_suppresses_typing_rumors() {
         bob_keys.public_key().to_hex(),
         bob_keys.public_key().to_hex(),
     )) as Arc<dyn StorageAdapter>;
-
-    let mut invite = Invite::create_new(
-        alice_keys.public_key(),
-        Some(alice_keys.public_key().to_hex()),
-        Some(1),
+    let mut bob_engine = ProtocolEngine::load_or_create_for_local_device(
+        bob_storage,
+        bob_keys.public_key(),
+        &bob_keys,
     )
-    .expect("invite");
-    invite.owner_public_key = Some(alice_keys.public_key());
-
-    let alice = NdrRuntime::new(
+    .expect("bob protocol engine");
+    let mut typing_rumor = pairwise_codec::typing_event(
         alice_keys.public_key(),
-        alice_keys.secret_key().to_secret_bytes(),
-        alice_keys.public_key().to_hex(),
-        alice_keys.public_key(),
-        None,
-        Some(invite.clone()),
+        pairwise_codec::EncodeOptions::new(200, 0),
+    )
+    .expect("typing rumor");
+    let typing_event = appcore_direct_unsigned_event_for_test(
+        &mut bob_engine,
+        &alice_keys,
+        &mut typing_rumor,
+        200,
     );
-    alice.init().expect("alice init");
-
-    let bob = NdrRuntime::new(
-        bob_keys.public_key(),
-        bob_keys.secret_key().to_secret_bytes(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key(),
-        Some(bob_storage),
-        None,
-    );
-    bob.init().expect("bob init");
-    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
-    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
-
-    alice
-        .send_typing(bob_keys.public_key(), None)
-        .expect("alice sends typing");
-    let bob_message_authors = bob.get_all_message_push_author_pubkeys();
-    let typing_event = drain_signed_events(&alice, &alice_keys)
-        .into_iter()
-        .find(|event| {
-            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
-                && bob_message_authors.contains(&event.pubkey)
-        })
-        .expect("typing event for Bob");
     let payload = serde_json::json!({
         "event": typing_event,
         "title": "New message",
