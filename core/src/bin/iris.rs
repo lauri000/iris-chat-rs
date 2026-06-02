@@ -1699,7 +1699,6 @@ fn message_json(message: &ChatMessageSnapshot) -> Value {
             "outer_event_ids": message.delivery_trace.outer_event_ids.clone(),
             "pending_relay_event_ids": message.delivery_trace.pending_relay_event_ids.clone(),
             "queued_protocol_targets": message.delivery_trace.queued_protocol_targets.clone(),
-            "target_device_ids": message.delivery_trace.target_device_ids.clone(),
             "transport_channels": message.delivery_trace.transport_channels.clone(),
             "last_transport_error": message.delivery_trace.last_transport_error.clone(),
         },

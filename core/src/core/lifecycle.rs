@@ -152,7 +152,6 @@ impl AppCore {
                     "FlushPendingDeliveredReceipts"
                 }
                 InternalEvent::RelayPublishDrainFinished { .. } => "RelayPublishDrainFinished",
-                InternalEvent::RetryPendingRelayPublishes { .. } => "RetryPendingRelayPublishes",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
                 InternalEvent::AttachmentUploadProgress { .. } => "AttachmentUploadProgress",
                 InternalEvent::ProfilePictureUploadFinished { .. } => {
@@ -707,9 +706,6 @@ impl AppCore {
             }
             InternalEvent::RelayPublishDrainFinished { token, results } => {
                 self.handle_relay_publish_drain_finished(token, results);
-            }
-            InternalEvent::RetryPendingRelayPublishes { reason } => {
-                self.retry_pending_relay_publishes(&reason);
             }
             InternalEvent::AttachmentUploadFinished { chat_id, result } => {
                 self.handle_attachment_upload_finished(chat_id, result);

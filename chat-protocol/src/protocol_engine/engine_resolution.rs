@@ -216,14 +216,17 @@ impl ProtocolEngine {
         );
         let mut event_ids = Vec::new();
         let mut effects = Vec::new();
+        let chat_id = group_chat_id(&prepared.group_id);
         effects.extend(protocol_effects_from_group_prepared_publish(
             &prepared.local_sibling,
             inner_event_id.clone(),
+            chat_id.clone(),
             &mut event_ids,
         )?);
         effects.extend(protocol_effects_from_group_prepared_publish(
             &prepared.remote,
             inner_event_id,
+            chat_id,
             &mut event_ids,
         )?);
         let mut queued_targets = self.queued_group_targets();
@@ -260,6 +263,7 @@ impl ProtocolEngine {
         let mut effects = protocol_effects_from_group_prepared_publish(
             &prepared,
             None,
+            group_chat_id(&group.group_id),
             &mut event_ids,
         )?;
         let mut queued_targets = self.queued_group_targets();
@@ -689,7 +693,8 @@ impl ProtocolEngine {
             .collect::<Vec<_>>();
         let mut effects = Vec::new();
         for request in requests {
-            effects.extend(self.sender_key_repair_request_effects(request, now)?);
+            let repair_effects = self.sender_key_repair_request_effects(request, now)?;
+            effects.extend(repair_effects);
         }
         Ok(effects)
     }

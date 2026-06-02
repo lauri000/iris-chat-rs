@@ -81,7 +81,14 @@ impl ProtocolEngine {
         from_owner_pubkey: PublicKey,
         from_sender_device_pubkey: Option<PublicKey>,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        let is_group_payload = self.group_manager.is_pairwise_payload(payload);
+        let (is_group_payload, is_supported_group_payload) =
+            classify_group_pairwise_payload(payload).unwrap_or((false, false));
+        if is_group_payload && !is_supported_group_payload {
+            return Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                ..Default::default()
+            });
+        }
         let sender_device = from_sender_device_pubkey.map(ndr_device);
         let sender_owner = ndr_owner(from_owner_pubkey);
         let sender_owner =
@@ -93,7 +100,7 @@ impl ProtocolEngine {
                     claimed_owner,
                     sender_device,
                 } => {
-                    if is_group_payload {
+                    if is_supported_group_payload {
                         let queued_targets = vec![format!("owner:{}", claimed_owner.to_hex())];
                         let effects = self.protocol_backfill_effects_for_targets(
                             &queued_targets,
@@ -127,11 +134,12 @@ impl ProtocolEngine {
         match result {
             Ok(Some(event)) => {
                 if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
-                    let (effects, queued_targets) = self.sender_key_repair_response_effects(
-                        repair.requester_owner,
-                        &repair.request,
-                        NdrUnixSeconds(unix_now().get()),
-                    )?;
+                    let (effects, queued_targets) =
+                        self.sender_key_repair_response_effects(
+                            repair.requester_owner,
+                            &repair.request,
+                            NdrUnixSeconds(unix_now().get()),
+                        )?;
                     self.persist()?;
                     return Ok(ProtocolGroupIncomingResult {
                         effects,
@@ -144,8 +152,7 @@ impl ProtocolEngine {
                 let mut queued_targets = Vec::new();
                 if sender_owner != self.local_owner {
                     if let GroupIncomingEvent::MetadataUpdated(group) = &event {
-                        let (sync_effects, sync_targets) =
-                            self.sync_group_to_local_siblings(group)?;
+                        let (sync_effects, sync_targets) = self.sync_group_to_local_siblings(group)?;
                         effects.extend(sync_effects);
                         queued_targets.extend(sync_targets);
                     }
@@ -176,7 +183,7 @@ impl ProtocolEngine {
                 ..Default::default()
             }),
             Err(error) => {
-                if is_group_payload {
+                if is_supported_group_payload {
                     self.queue_pending_group_pairwise_payload(
                         sender_owner,
                         sender_device,
@@ -297,6 +304,7 @@ impl ProtocolEngine {
                 effects.extend(protocol_effects_from_prepared(
                     &remote,
                     pending.inner_event_id.clone(),
+                    pending.chat_id.clone(),
                     &mut event_ids,
                 )?);
             }
@@ -318,6 +326,7 @@ impl ProtocolEngine {
                     effects.extend(protocol_effects_from_prepared(
                         &local,
                         pending.inner_event_id.clone(),
+                        pending.chat_id.clone(),
                         &mut event_ids,
                     )?);
                 }
@@ -511,6 +520,12 @@ impl ProtocolEngine {
                 still_pairwise.push(pending);
                 continue;
             }
+            let (_, is_supported_group_payload) =
+                classify_group_pairwise_payload(&pending.payload).unwrap_or((false, false));
+            if !is_supported_group_payload {
+                persist_needed = true;
+                continue;
+            }
             let sender_resolution = self
                 .resolve_group_pairwise_sender_owner(pending.sender_owner, pending.sender_device);
             let sender_owner = match sender_resolution {
@@ -539,11 +554,12 @@ impl ProtocolEngine {
             match outcome {
                 Ok(Some(event)) => {
                     if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
-                        let (effects, queued_targets) = self.sender_key_repair_response_effects(
-                            repair.requester_owner,
-                            &repair.request,
-                            now,
-                        )?;
+                        let (effects, queued_targets) =
+                            self.sender_key_repair_response_effects(
+                                repair.requester_owner,
+                                &repair.request,
+                                now,
+                            )?;
                         result.effects.extend(effects);
                         result.queued_targets.extend(queued_targets);
                     } else {
@@ -657,9 +673,11 @@ impl ProtocolEngine {
             };
             let still_has_gap = !prepared.relay_gaps.is_empty();
             let mut event_ids = Vec::new();
+            let chat_id = group_chat_id(&pending.group_id);
             effects.extend(protocol_effects_from_group_prepared_publish(
                 &prepared,
                 pending.inner_event_id.clone(),
+                chat_id,
                 &mut event_ids,
             )?);
             if still_has_gap {

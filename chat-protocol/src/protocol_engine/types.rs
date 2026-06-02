@@ -8,6 +8,10 @@ fn default_true() -> bool {
     true
 }
 
+fn group_chat_id(group_id: &str) -> String {
+    format!("group:{group_id}")
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct ProtocolEnginePersistedState {
     version: u32,
@@ -36,28 +40,16 @@ struct ProtocolEnginePersistedState {
     last_backfill_attempt_secs: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub struct ProtocolPublishEvent {
+pub struct ProtocolPublish {
     pub event: Event,
+    pub chat_id: String,
     pub inner_event_id: Option<String>,
-    pub target_owner_pubkey_hex: Option<String>,
-    pub target_device_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub enum ProtocolEffect {
-    PublishSigned(Event),
-    PublishSignedForInnerEvent {
-        event: Event,
-        inner_event_id: Option<String>,
-        target_owner_pubkey_hex: Option<String>,
-        target_device_id: Option<String>,
-    },
-    PublishStagedFirstContact {
-        bootstrap: Vec<ProtocolPublishEvent>,
-        payload: Vec<ProtocolPublishEvent>,
-    },
+    Publish(ProtocolPublish),
     FetchProtocolState {
         filters: Vec<Filter>,
         reason: &'static str,

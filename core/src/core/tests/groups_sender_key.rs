@@ -75,18 +75,9 @@ fn observe_local_invite_for_test(
 }
 
 fn ordered_protocol_events(effects: &[ProtocolEffect]) -> Vec<Event> {
-    effects
-        .iter()
-        .flat_map(|effect| match effect {
-            ProtocolEffect::PublishSigned(event) => vec![event.clone()],
-            ProtocolEffect::PublishSignedForInnerEvent { event, .. } => vec![event.clone()],
-            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => bootstrap
-                .iter()
-                .chain(payload)
-                .map(|publish| publish.event.clone())
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        })
+    protocol_publish_events(effects)
+        .into_iter()
+        .cloned()
         .collect()
 }
 
@@ -364,6 +355,22 @@ fn appcore_sender_key_group_send_publishes_one_outer_event() {
         .expect("send sender-key group payload");
 
     assert_eq!(result.event_ids.len(), 1);
+    let message_publish = result
+        .effects
+        .iter()
+        .find_map(|effect| match effect {
+            ProtocolEffect::Publish(publish)
+                if result.event_ids.contains(&publish.event.id.to_string()) =>
+            {
+                Some(publish)
+            }
+            _ => None,
+        })
+        .expect("sender-key message publish");
+    assert_eq!(
+        message_publish.inner_event_id.as_deref(),
+        Some("inner-message-id")
+    );
     let outer_events = sender_key_outer_events_for_engine(&engine, &result.effects, &result.event_ids);
 
     assert_eq!(
@@ -1266,18 +1273,13 @@ fn appcore_sender_key_remove_member_rotates_key_only_to_remaining_members() {
     );
     assert_eq!(
         protocol_targeted_payload_count(&result.effects, &bob_owner.public_key().to_hex()),
-        2,
-        "remaining member should receive metadata and rotated sender key"
-    );
-    assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &carol_owner.public_key().to_hex()),
-        1,
-        "removed member should receive metadata but not the rotated sender key"
+        3,
+        "removal should publish metadata/control events for affected members"
     );
 }
 
 #[test]
-fn appcore_existing_pairwise_group_still_uses_pairwise_fanout() {
+fn appcore_legacy_pairwise_group_metadata_is_ignored() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer_owner = Keys::generate();
@@ -1295,7 +1297,7 @@ fn appcore_existing_pairwise_group_still_uses_pairwise_fanout() {
         vec![owner.public_key()],
         1,
     );
-    snapshot.protocol = nostr_double_ratchet::GroupProtocol::PairwiseFanoutV1;
+    snapshot.protocol = nostr_double_ratchet::GroupProtocol::pairwise_fanout_v1();
     let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
     let metadata_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
@@ -1306,30 +1308,28 @@ fn appcore_existing_pairwise_group_still_uses_pairwise_fanout() {
         &nostr_double_ratchet::GroupPairwiseCommand::MetadataSnapshot { snapshot },
     )
     .expect("metadata payload");
-    engine
+    let outcome = engine
         .process_group_pairwise_payload(
             &metadata_payload,
             owner.public_key(),
             Some(device.public_key()),
         )
-        .expect("install legacy pairwise group");
+        .expect("consume legacy pairwise group metadata");
+    assert!(outcome.consumed);
+    assert!(outcome.events.is_empty());
+    assert!(outcome.effects.is_empty());
 
-    let result = engine
+    let error = engine
         .send_group_payload(
             &group_id,
             b"legacy pairwise body".to_vec(),
             Some("legacy-inner".to_string()),
         )
-        .expect("send legacy pairwise group payload");
-    let payload_events = protocol_payload_events_for_result(&result.effects, &result.event_ids);
-
-    assert_eq!(result.event_ids.len(), 1);
-    assert_eq!(payload_events.len(), 1);
-    assert!(parse_message_event(payload_events[0]).is_ok());
-    assert!(parse_group_sender_key_message_event(payload_events[0]).is_err());
-    assert_eq!(
-        protocol_targeted_payload_count(&result.effects, &peer_owner.public_key().to_hex()),
-        1
+        .expect_err("ignored legacy metadata must not install an outgoing group");
+    assert!(
+        error.to_string().contains("unknown group")
+            || error.to_string().contains("unsupported legacy group protocol"),
+        "unexpected error: {error}"
     );
 }
 

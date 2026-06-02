@@ -745,27 +745,25 @@ class Scenario:
         data_dir = self.pending_data_source(device_id)
         run([sys.executable, str(PENDING_PUBLISHES), "list", "--data-dir", data_dir, *extra], env=self.scenario_env())
 
-    def drop_and_resume(self, sender_device: str, target_device: str, *, limit: int, pairwise_only: bool) -> None:
+    def drop_and_resume(self, sender_device: str, peer_device: str, *, limit: int, pairwise_only: bool) -> None:
         sender = self.state.get("devices", {}).get(sender_device)
-        target = self.state.get("devices", {}).get(target_device)
+        peer = self.state.get("devices", {}).get(peer_device)
         if not sender:
             raise SystemExit(f"Unknown sender device `{sender_device}` in state. Run `setup` first.")
-        if not target:
-            raise SystemExit(f"Unknown target device `{target_device}` in state. Run `setup` first.")
+        if not peer:
+            raise SystemExit(f"Unknown peer device `{peer_device}` in state. Run `setup` first.")
         args = [
             sys.executable,
             str(PENDING_PUBLISHES),
             "write-drop-file",
             "--data-dir",
             self.pending_data_source(sender_device),
-            "--target-owner-hex",
-            target["owner_hex"],
-            "--target-device-hex",
-            target["device_hex"],
             "--limit",
             str(limit),
             "--drop-file",
             str(self.relay_config()["drop_file"]),
+            "--chat-id",
+            peer["owner_hex"],
         ]
         if pairwise_only:
             args.insert(5, "--pairwise-only")
@@ -825,7 +823,7 @@ def parse_args() -> argparse.Namespace:
     inspect.add_argument("--format", choices=("table", "json", "ids"), default="table")
     drop = sub.add_parser("drop-and-resume", help="Write a pending event to the drop file and restart relay.")
     drop.add_argument("--sender-device", required=True)
-    drop.add_argument("--target-device", required=True)
+    drop.add_argument("--peer-device", required=True)
     drop.add_argument("--limit", type=int, default=1)
     drop.set_defaults(pairwise_only=True)
     drop.add_argument(
@@ -856,7 +854,7 @@ def main() -> int:
     elif args.command == "drop-and-resume":
         scenario.drop_and_resume(
             args.sender_device,
-            args.target_device,
+            args.peer_device,
             limit=args.limit,
             pairwise_only=args.pairwise_only,
         )

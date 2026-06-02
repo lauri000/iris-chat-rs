@@ -1598,7 +1598,7 @@ final class InteropHarnessTests: XCTestCase {
             pendingRelayPublishes: sqliteRows(
                 db: db,
                 sql: """
-                    SELECT label, target_owner_pubkey_hex, target_device_id, chat_id, message_id, attempt_count
+                    SELECT label, chat_id, inner_event_id, attempt_count
                     FROM pending_relay_publishes
                     ORDER BY created_at_secs DESC
                     LIMIT 30
@@ -1608,9 +1608,7 @@ final class InteropHarnessTests: XCTestCase {
                     sqliteColumnString(stmt, 0),
                     sqliteColumnString(stmt, 1),
                     sqliteColumnString(stmt, 2),
-                    sqliteColumnString(stmt, 3),
-                    sqliteColumnString(stmt, 4),
-                    String(sqlite3_column_int64(stmt, 5)),
+                    String(sqlite3_column_int64(stmt, 3)),
                 ].joined(separator: ",")
             }
         )
@@ -1923,8 +1921,8 @@ final class InteropHarnessTests: XCTestCase {
             [
                 stringValue(entry["event_id"]),
                 stringValue(entry["label"]),
-                stringValue(entry["target_owner_pubkey_hex"]),
-                stringValue(entry["target_device_id"]),
+                stringValue(entry["chat_id"]),
+                stringValue(entry["inner_event_id"]),
                 "attempts=\(intValue(entry["attempt_count"]))",
                 "error=\(stringValue(entry["last_error"]))",
             ].joined(separator: ",")

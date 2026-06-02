@@ -792,7 +792,8 @@ impl AppCore {
                     .cloned()
                     .collect::<Vec<_>>()
                 {
-                    if let (Some(chat_id), Some(message_id)) = (pending.chat_id, pending.message_id)
+                    if let (Some(chat_id), Some(message_id)) =
+                        (pending.chat_id, pending.inner_event_id)
                     {
                         self.sync_message_delivery_trace(&chat_id, &message_id);
                     }
@@ -802,7 +803,6 @@ impl AppCore {
                 self.push_debug_log("publish.runtime.queue", format!("load_failed={error}"));
             }
         }
-
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
         self.start_relay_status_watchers();

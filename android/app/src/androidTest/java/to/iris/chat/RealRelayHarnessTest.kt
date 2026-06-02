@@ -245,7 +245,6 @@ class RealRelayHarnessTest {
             "message" to message,
             "delivery" to finalized.delivery.name,
             "outer_event_ids" to finalized.deliveryTrace.outerEventIds.joinToString(","),
-            "target_device_ids" to finalized.deliveryTrace.targetDeviceIds.joinToString(","),
             "recipient_deliveries" to finalized.recipientDeliveries.joinToString("|") { recipient ->
                 "${recipient.ownerPubkeyHex},${recipient.delivery.name}"
             },
@@ -1044,7 +1043,6 @@ class RealRelayHarnessTest {
             "message" to message,
             "delivery" to finalized.delivery.name,
             "outer_event_ids" to finalized.deliveryTrace.outerEventIds.joinToString(","),
-            "target_device_ids" to finalized.deliveryTrace.targetDeviceIds.joinToString(","),
             "recipient_deliveries" to finalized.recipientDeliveries.joinToString("|") { recipient ->
                 "${recipient.ownerPubkeyHex},${recipient.delivery.name}"
             },
@@ -2074,7 +2072,7 @@ class RealRelayHarnessTest {
                             summarizeRows(
                                 db,
                                 """
-                                    SELECT label, target_owner_pubkey_hex, target_device_id, chat_id, message_id, attempt_count
+                                    SELECT label, chat_id, inner_event_id, attempt_count
                                     FROM pending_relay_publishes
                                     ORDER BY created_at_secs DESC
                                     LIMIT 30
@@ -2084,9 +2082,7 @@ class RealRelayHarnessTest {
                                     cursor.getString(0),
                                     cursor.stringOrEmpty(1),
                                     cursor.stringOrEmpty(2),
-                                    cursor.stringOrEmpty(3),
-                                    cursor.stringOrEmpty(4),
-                                    cursor.getLong(5).toString(),
+                                    cursor.getLong(3).toString(),
                                 ).joinToString(",")
                             },
                     )
@@ -2451,8 +2447,8 @@ class RealRelayHarnessTest {
             listOf(
                 entry.optString("event_id"),
                 entry.optString("label"),
-                entry.optString("target_owner_pubkey_hex"),
-                entry.optString("target_device_id"),
+                entry.optString("chat_id"),
+                entry.optString("inner_event_id"),
                 "attempts=${entry.optInt("attempt_count")}",
                 "error=${entry.optString("last_error")}",
             ).joinToString(",")

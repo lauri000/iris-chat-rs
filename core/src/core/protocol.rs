@@ -112,10 +112,7 @@ impl AppCore {
                         result.queued_targets.len()
                     ),
                 );
-                self.process_protocol_engine_effects_with_completions(
-                    result.effects,
-                    &BTreeMap::new(),
-                );
+                self.process_protocol_engine_effects(result.effects);
                 if !result.queued_targets.is_empty() {
                     self.handle_queued_protocol_targets(reason, &result.queued_targets);
                 }
@@ -142,37 +139,25 @@ impl AppCore {
         let mut published = 0usize;
         let mut queued_targets = Vec::new();
         let mut direct_effects = Vec::new();
-        let mut direct_completions = BTreeMap::new();
+        let mut direct_message_refs = Vec::new();
         for result in batch.direct_results {
             published = published.saturating_add(result.event_ids.len());
             queued_targets.extend(result.queued_targets.clone());
-            direct_completions.extend(
-                result
-                    .event_ids
-                    .iter()
-                    .map(|event_id| {
-                        (
-                            event_id.clone(),
-                            (result.message_id.clone(), result.chat_id.clone()),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>(),
-            );
             direct_effects.extend(result.effects);
-            self.sync_message_delivery_trace(&result.chat_id, &result.message_id);
-            self.reconcile_outgoing_message_delivery(&result.chat_id, &result.message_id);
+            direct_message_refs.push((result.chat_id, result.message_id));
         }
         queued_targets.extend(batch.group_result.queued_targets.clone());
         normalize_protocol_queued_targets(&mut queued_targets);
-        self.process_protocol_engine_effects_with_completions(direct_effects, &direct_completions);
+        self.process_protocol_engine_effects(direct_effects);
+        for (chat_id, message_id) in direct_message_refs {
+            self.sync_message_delivery_trace(&chat_id, &message_id);
+            self.reconcile_outgoing_message_delivery(&chat_id, &message_id);
+        }
         for group_event in batch.group_result.events {
             self.apply_group_decrypted_event(group_event);
         }
-        self.process_protocol_engine_effects_with_completions(
-            batch.group_result.effects,
-            &BTreeMap::new(),
-        );
-        self.process_protocol_engine_effects_with_completions(batch.effects, &BTreeMap::new());
+        self.process_protocol_engine_effects(batch.group_result.effects);
+        self.process_protocol_engine_effects(batch.effects);
         for decrypted in batch.direct_messages {
             let event_id = decrypted.event_id.clone();
             self.apply_decrypted_runtime_message_with_metadata(
