@@ -1334,7 +1334,7 @@ checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 
 [[package]]
 name = "iris-chat"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1373,7 +1373,7 @@ dependencies = [
 
 [[package]]
 name = "iris-chat-protocol"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -1644,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.147"
+version = "0.0.148"
 dependencies = [
  "base64",
  "hex",
@@ -1659,7 +1659,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet-nostr"
-version = "0.0.147"
+version = "0.0.148"
 dependencies = [
  "base64",
  "hex",
@@ -1674,12 +1674,23 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet-pairwise-codec"
-version = "0.0.147"
+version = "0.0.148"
 dependencies = [
  "nostr 0.44.3",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "nostr-double-ratchet-runtime"
+version = "0.0.148"
+dependencies = [
+ "flate2",
+ "nostr-double-ratchet",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

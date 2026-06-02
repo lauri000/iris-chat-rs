@@ -23,7 +23,11 @@ const PROTOCOL_SUBSCRIPTION_APPLY_TIMEOUT_SECS: u64 = 8;
 const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
 pub(super) const PROTOCOL_RECONNECT_CHECK_SECS: u64 = 2;
 const RELAY_TRANSPORT_RETRY_BACKOFF_SECS: [u64; 5] = [2, 5, 15, 30, 60];
-const RELAY_CONNECT_STALE_AFTER: Duration = Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS * 4);
+const PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE: usize = 64;
+#[cfg(not(test))]
+const NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS: [u64; 2] = [2_500, 10_000];
+#[cfg(test)]
+const NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS: [u64; 1] = [50];
 
 impl AppCore {
     pub(super) fn send_protocol_engine_unsigned_event(
@@ -1808,5 +1812,127 @@ impl AppCore {
                 self.seen_event_ids.remove(&expired);
             }
         }
+    }
+}
+
+fn normalize_protocol_queued_targets(targets: &mut Vec<String>) {
+    targets.retain(|target| !target.is_empty());
+    targets.sort();
+    targets.dedup();
+}
+
+struct ProtocolSubscriptionApplyOutput {
+    connected_before: u64,
+    connected_after: u64,
+    filter_count: u64,
+    success: bool,
+    error: Option<String>,
+}
+
+async fn current_client_relay_statuses(client: &Client) -> Vec<(String, RelayStatus)> {
+    client
+        .relays()
+        .await
+        .into_iter()
+        .map(|(relay_url, relay)| {
+            let relay_url = normalize_nostr_relay_url(&relay_url.to_string())
+                .unwrap_or_else(|_| relay_url.to_string());
+            (relay_url, relay.status())
+        })
+        .collect()
+}
+
+async fn subscribe_protocol_filters_with_id(
+    client: &Client,
+    subscription_id: SubscriptionId,
+    filters: Vec<Filter>,
+) -> Result<(), String> {
+    let relays = client.relays().await;
+    let mut attempted = 0usize;
+    let mut accepted = 0usize;
+    let mut last_error = None;
+    for relay in relays.values() {
+        if relay.status() != RelayStatus::Connected {
+            continue;
+        }
+        attempted = attempted.saturating_add(1);
+        match relay
+            .subscribe_with_id(
+                subscription_id.clone(),
+                filters.clone(),
+                SubscribeOptions::default(),
+            )
+            .await
+        {
+            Ok(()) => accepted = accepted.saturating_add(1),
+            Err(error) => last_error = Some(error.to_string()),
+        }
+    }
+    if accepted > 0 {
+        Ok(())
+    } else if attempted == 0 {
+        Err("no connected relays".to_string())
+    } else {
+        Err(last_error.unwrap_or_else(|| "no relay accepted subscription".to_string()))
+    }
+}
+
+async fn fetch_events_for_filters(
+    client: &Client,
+    filters: Vec<Filter>,
+    timeout: Duration,
+) -> Result<Vec<Event>, String> {
+    use tokio::task::JoinSet;
+
+    let mut tasks = JoinSet::new();
+    for filter in filters {
+        let client = client.clone();
+        tasks.spawn(async move { client.fetch_events(filter, timeout).await });
+    }
+
+    let mut any_success = false;
+    let mut last_error = None;
+    let mut seen_event_ids = HashSet::new();
+    let mut collected = Vec::new();
+
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(Ok(events)) => {
+                any_success = true;
+                for event in events.iter() {
+                    if seen_event_ids.insert(event.id) {
+                        collected.push(event.clone());
+                    }
+                }
+            }
+            Ok(Err(error)) => {
+                last_error = Some(error.to_string());
+            }
+            Err(error) => {
+                last_error = Some(error.to_string());
+            }
+        }
+    }
+
+    if any_success {
+        Ok(collected)
+    } else {
+        Err(last_error.unwrap_or_else(|| "no protocol filters fetched".to_string()))
+    }
+}
+
+async fn wait_for_connected_relays(client: &Client, timeout: Duration) -> usize {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let connected = client
+            .relays()
+            .await
+            .values()
+            .filter(|relay| relay.status() == RelayStatus::Connected)
+            .count();
+        if connected > 0 || tokio::time::Instant::now() >= deadline {
+            return connected;
+        }
+        sleep(Duration::from_millis(100)).await;
     }
 }
