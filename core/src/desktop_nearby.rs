@@ -609,7 +609,7 @@ impl DesktopNearbyRuntime {
                 .mdns_instances
                 .values()
                 .filter_map(|instance| {
-                    Some((instance.addr?, instance.port?, instance.peer_id.clone()))
+                    Some((instance.addr?, instance.port?, instance.peer_id.clone()?))
                 })
                 .collect::<Vec<_>>();
             for (addr, port, remote_peer_id) in discovered {
@@ -627,7 +627,7 @@ impl DesktopNearbyRuntime {
                 &SocketAddr::V4(SocketAddrV4::new(addr, port)),
                 Duration::from_secs(3),
             ) {
-                Ok(stream) => self.add_connection(stream, remote_peer_id, Some(key)),
+                Ok(stream) => self.add_connection(stream, Some(remote_peer_id), Some(key)),
                 Err(_) => {
                     let mut inner = lock_desktop_nearby_inner(&self.inner);
                     inner.endpoint_keys.remove(&key);
@@ -1346,10 +1346,11 @@ fn mdns_socket(local_addr: Ipv4Addr) -> std::io::Result<UdpSocket> {
         let _ = socket.set_reuse_port(true);
     }
     socket.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MDNS_PORT).into())?;
+    socket.join_multicast_v4(&MDNS_GROUP, &local_addr)?;
+    socket.set_multicast_if_v4(&local_addr)?;
+    socket.set_multicast_loop_v4(true)?;
+    socket.set_multicast_ttl_v4(255)?;
     let udp: UdpSocket = socket.into();
-    udp.join_multicast_v4(&MDNS_GROUP, &local_addr)?;
-    udp.set_multicast_loop_v4(true)?;
-    udp.set_multicast_ttl_v4(255)?;
     udp.set_read_timeout(Some(Duration::from_millis(500)))?;
     Ok(udp)
 }
@@ -1721,98 +1722,5 @@ fn is_private_ipv4(ip: Ipv4Addr) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct NoopDesktopNearbyObserver;
-
-    impl DesktopNearbyObserver for NoopDesktopNearbyObserver {
-        fn desktop_nearby_changed(&self, _snapshot: DesktopNearbySnapshot) {}
-    }
-
-    #[test]
-    #[ignore = "LAN multicast discovery is host-network dependent and flakes in sandboxed CI"]
-    fn desktop_lan_services_discover_each_other_on_same_host() {
-        if private_local_ipv4().is_none() {
-            eprintln!("skipping LAN nearby smoke: no private local IPv4 route");
-            return;
-        }
-
-        let alice_dir = tempfile::TempDir::new().expect("alice temp dir");
-        let bob_dir = tempfile::TempDir::new().expect("bob temp dir");
-        let alice_app = FfiApp::new(
-            alice_dir.path().to_string_lossy().to_string(),
-            String::new(),
-            "test".to_string(),
-        );
-        let bob_app = FfiApp::new(
-            bob_dir.path().to_string_lossy().to_string(),
-            String::new(),
-            "test".to_string(),
-        );
-        let alice =
-            DesktopNearbyService::new(alice_app.clone(), Arc::new(NoopDesktopNearbyObserver));
-        let bob = DesktopNearbyService::new(bob_app.clone(), Arc::new(NoopDesktopNearbyObserver));
-
-        alice.start("Alice".to_string());
-        bob.start("Bob".to_string());
-
-        let started = Instant::now();
-        let mut alice_snapshot = alice.snapshot();
-        let mut bob_snapshot = bob.snapshot();
-        while started.elapsed() < Duration::from_secs(20) {
-            alice_snapshot = alice.snapshot();
-            bob_snapshot = bob.snapshot();
-            if alice_snapshot.status == "Local network unavailable"
-                || bob_snapshot.status == "Local network unavailable"
-            {
-                break;
-            }
-            if !alice_snapshot.peers.is_empty() && !bob_snapshot.peers.is_empty() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(250));
-        }
-
-        alice.stop();
-        bob.stop();
-        alice_app.shutdown();
-        bob_app.shutdown();
-
-        if alice_snapshot.status == "Local network unavailable"
-            || bob_snapshot.status == "Local network unavailable"
-        {
-            eprintln!(
-                "skipping LAN nearby smoke: local network unavailable (alice={}, bob={})",
-                alice_snapshot.status, bob_snapshot.status
-            );
-            return;
-        }
-
-        assert!(
-            !alice_snapshot.peers.is_empty() && !bob_snapshot.peers.is_empty(),
-            "LAN nearby peers should discover each other; alice={alice_snapshot:?} bob={bob_snapshot:?}"
-        );
-    }
-
-    #[test]
-    fn verified_nearby_identity_beats_advertised_device_name() {
-        let owner = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        let expected = fallback_profile_name_for_identity(owner);
-
-        assert_eq!(
-            nearby_peer_name(Some("iPhone"), Some(owner), None, Some("iPhone")),
-            expected
-        );
-    }
-
-    #[test]
-    fn advertised_profile_name_beats_identity_fallback() {
-        let owner = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-        assert_eq!(
-            nearby_peer_name(Some("iPhone"), Some(owner), Some("Alice"), Some("iPhone")),
-            "Alice"
-        );
-    }
-}
+#[path = "desktop_nearby_tests.rs"]
+mod tests;
