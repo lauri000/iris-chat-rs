@@ -4,11 +4,54 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_DIR="${ROOT_DIR}/android"
-ANDROID_TEST_AVD="${IRIS_ANDROID_QA_AVD:-Medium_Phone_API_36.1}"
+ANDROID_TEST_AVD="${IRIS_ANDROID_QA_AVD:-}"
 PACKAGE_NAME="to.iris.chat.debug"
 TEST_PACKAGE_NAME="${ANDROID_TEST_PACKAGE_NAME:-to.iris.chat.test}"
 CONTRACT_CLASSES="to.iris.chat.core.AppManagerContractTest"
 SMOKE_CLASSES="to.iris.chat.PikaLikeUiTest,to.iris.chat.account.AndroidKeystoreSecretStoreTest"
+
+contains_line() {
+  local needle="$1"
+  local value
+  while IFS= read -r value; do
+    [[ "$value" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+select_android_test_avd() {
+  if [[ -n "${ANDROID_TEST_AVD}" ]]; then
+    printf '%s\n' "${ANDROID_TEST_AVD}"
+    return 0
+  fi
+
+  local installed preferred avd
+  installed="$("${ROOT_DIR}/scripts/run_android_emulators.sh" --list)"
+  local preferred_avds=(
+    Medium_Phone_API_36.1
+    Pixel_9a
+    Pixel_Fold
+    GroupHardening_API_36_C
+    GroupHardening_API_36_D
+    SenderKey_API_36
+    SenderKey_API_36_B
+  )
+  for preferred in "${preferred_avds[@]}"; do
+    if contains_line "$preferred" <<<"$installed"; then
+      printf '%s\n' "$preferred"
+      return 0
+    fi
+  done
+  while IFS= read -r avd; do
+    if [[ -n "$avd" ]]; then
+      printf '%s\n' "$avd"
+      return 0
+    fi
+  done <<<"$installed"
+
+  echo "Need an Android AVD for qa-native-contract; none are installed." >&2
+  exit 1
+}
 
 resolve_serial() {
   if [[ -n "${IRIS_ANDROID_SERIAL:-}" ]]; then
@@ -35,8 +78,9 @@ resolve_serial() {
     fi
   fi
 
-  local boot_output
-  boot_output="$("${ROOT_DIR}/scripts/run_android_emulators.sh" "${ANDROID_TEST_AVD}")"
+  local boot_output selected_avd
+  selected_avd="$(select_android_test_avd)"
+  boot_output="$("${ROOT_DIR}/scripts/run_android_emulators.sh" "${selected_avd}")"
   printf '%s\n' "${boot_output}" | awk 'NR == 1 { print $2 }'
 }
 
