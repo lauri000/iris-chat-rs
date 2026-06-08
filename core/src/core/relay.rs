@@ -210,9 +210,7 @@ impl AppCore {
                 if unknown_message_author {
                     let targets_local_recipient =
                         message_has_header && self.message_targets_local_protocol_recipient(&event);
-                    if !message_has_header
-                        || (self.private_chat_invites.is_empty() && !targets_local_recipient)
-                    {
+                    if !message_has_header || !targets_local_recipient {
                         self.push_debug_log(
                             "appcore.protocol.message.ignored",
                             "unknown message author",

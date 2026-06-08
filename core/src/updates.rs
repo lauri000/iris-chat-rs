@@ -125,6 +125,13 @@ pub(crate) enum InternalEvent {
         token: u64,
         results: Vec<RelayPublishDrainResult>,
     },
+    RelayPublishDrainProgress {
+        token: u64,
+        result: RelayPublishDrainResult,
+    },
+    RetryPendingRelayPublishes {
+        reason: String,
+    },
     AttachmentUploadFinished {
         chat_id: String,
         result: Result<String, String>,

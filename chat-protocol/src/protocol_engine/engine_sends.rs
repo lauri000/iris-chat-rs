@@ -6,6 +6,7 @@ impl ProtocolEngine {
         created_at: u64,
     ) -> anyhow::Result<ProtocolRetryBatch> {
         let checkpoint = self.state_checkpoint();
+        let owner = ndr_owner(owner_pubkey);
         let roster = DeviceRoster::new(
             NdrUnixSeconds(created_at),
             app_keys
@@ -31,8 +32,7 @@ impl ProtocolEngine {
                 self.session_manager.apply_local_roster(roster)
             }
         } else {
-            self.session_manager
-                .observe_peer_roster(ndr_owner(owner_pubkey), roster)
+            self.session_manager.observe_peer_roster(owner, roster)
         };
         if matches!(
             decision,
@@ -40,6 +40,8 @@ impl ProtocolEngine {
         ) {
             return Ok(ProtocolRetryBatch::default());
         }
+        self.latest_app_keys_created_at
+            .insert(owner_pubkey.to_hex(), created_at);
         self.invalidate_known_message_author_cache();
         self.wake_pending_protocol_for_owner(owner);
         if let Err(error) = self.persist() {
@@ -48,15 +50,6 @@ impl ProtocolEngine {
             return Err(error);
         }
         self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
-    }
-
-    fn current_roster_for_owner(&self, owner: NdrOwnerPubkey) -> Option<DeviceRoster> {
-        self.session_manager
-            .snapshot()
-            .users
-            .into_iter()
-            .find(|user| user.owner_pubkey == owner)
-            .and_then(|user| user.roster)
     }
 
     pub fn observe_invite_event(&mut self, event: &Event) -> anyhow::Result<ProtocolRetryBatch> {

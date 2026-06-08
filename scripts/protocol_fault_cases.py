@@ -7,6 +7,10 @@ from pathlib import Path
 from protocol_fault_common import CaseResult, ValidationFailure
 
 
+def case_stamp() -> str:
+    return time.strftime("%H%M%S")
+
+
 class ProtocolFaultCasesMixin:
     def run_revision_repair_flow(
         self,

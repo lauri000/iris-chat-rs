@@ -207,6 +207,9 @@ impl ProtocolEngine {
                 let mut queued_targets = Vec::new();
                 if sender_owner != self.local_owner {
                     if let GroupIncomingEvent::MetadataUpdated(group) = &event {
+                        for pending in &mut self.pending_group_pairwise_payloads {
+                            pending.next_retry_at_secs = 0;
+                        }
                         let (sync_effects, sync_targets) = self.sync_group_to_local_siblings(group)?;
                         effects.extend(sync_effects);
                         queued_targets.extend(sync_targets);

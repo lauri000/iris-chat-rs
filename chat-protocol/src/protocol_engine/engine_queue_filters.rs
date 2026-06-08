@@ -157,7 +157,10 @@ impl ProtocolEngine {
 
         let local_targets =
             self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes);
-        if !local_targets.is_empty() || pending.probe_local_sibling_roster {
+        if !local_targets.is_empty()
+            || (pending.probe_local_sibling_roster
+                && !self.has_app_keys_for_owner(self.local_owner))
+        {
             if let Ok(owner) = public_owner(self.local_owner) {
                 owner_authors.push(owner);
             }
@@ -257,6 +260,7 @@ impl ProtocolEngine {
             && self
                 .remaining_local_sibling_targets(&pending.delivered_local_device_hexes)
                 .is_empty()
+            && !self.has_app_keys_for_owner(self.local_owner)
         {
             targets.push(format!("owner:{}", self.local_owner.to_hex()));
         }
@@ -334,6 +338,7 @@ impl ProtocolEngine {
             version: PROTOCOL_ENGINE_STATE_VERSION,
             session_manager: self.session_manager.snapshot(),
             group_manager: self.group_manager.snapshot(),
+            latest_app_keys_created_at: self.latest_app_keys_created_at.clone(),
             pending_outbound: self.pending_outbound.clone(),
             pending_inbound: self.pending_inbound.clone(),
             pending_group_fanouts: self.pending_group_fanouts.clone(),

@@ -21,6 +21,7 @@ impl ProtocolEngine {
             storage,
             session_manager: SessionManager::new(local_owner, device_secret),
             group_manager: NostrGroupManager::new(local_owner),
+            latest_app_keys_created_at: BTreeMap::new(),
             pending_outbound: Vec::new(),
             pending_inbound: Vec::new(),
             pending_group_fanouts: Vec::new(),
@@ -98,6 +99,7 @@ impl ProtocolEngine {
             storage,
             session_manager,
             group_manager,
+            latest_app_keys_created_at: state.latest_app_keys_created_at,
             pending_outbound: state.pending_outbound,
             pending_inbound: state.pending_inbound,
             pending_group_fanouts: state.pending_group_fanouts,
@@ -678,6 +680,7 @@ impl ProtocolEngine {
         ProtocolEngineCheckpoint {
             session_manager: self.session_manager.clone(),
             group_manager: self.group_manager.clone(),
+            latest_app_keys_created_at: self.latest_app_keys_created_at.clone(),
             pending_outbound: self.pending_outbound.clone(),
             pending_inbound: self.pending_inbound.clone(),
             pending_group_fanouts: self.pending_group_fanouts.clone(),
@@ -695,6 +698,7 @@ impl ProtocolEngine {
     fn restore_checkpoint(&mut self, checkpoint: ProtocolEngineCheckpoint) {
         self.session_manager = checkpoint.session_manager;
         self.group_manager = checkpoint.group_manager;
+        self.latest_app_keys_created_at = checkpoint.latest_app_keys_created_at;
         self.pending_outbound = checkpoint.pending_outbound;
         self.pending_inbound = checkpoint.pending_inbound;
         self.pending_group_fanouts = checkpoint.pending_group_fanouts;

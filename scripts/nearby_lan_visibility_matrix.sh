@@ -168,6 +168,138 @@ require_harness_success() {
   fi
 }
 
+same_host_lan_preflight() {
+  python3 - <<'PY'
+import socket
+import struct
+import sys
+import threading
+import time
+
+MDNS_GROUP = "224.0.0.251"
+
+
+def private_local_ipv4():
+    for target in ("8.8.8.8", "1.1.1.1"):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            try:
+                sock.connect((target, 80))
+                ip = sock.getsockname()[0]
+            except OSError:
+                continue
+            octets = [int(part) for part in ip.split(".")]
+            if (
+                octets[0] == 10
+                or octets[0] == 127
+                or (octets[0] == 169 and octets[1] == 254)
+                or (octets[0] == 172 and 16 <= octets[1] <= 31)
+                or (octets[0] == 192 and octets[1] == 168)
+            ):
+                return ip
+    return None
+
+
+def multicast_socket(local_addr, port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if hasattr(socket, "SO_REUSEPORT"):
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except OSError:
+            pass
+    try:
+        sock.bind(("", port))
+        membership = socket.inet_aton(MDNS_GROUP) + socket.inet_aton(local_addr)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(local_addr))
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
+        sock.settimeout(0.5)
+        return sock
+    except OSError:
+        sock.close()
+        return None
+
+
+def received(sock, probe):
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline:
+        try:
+            data, _ = sock.recvfrom(64)
+        except socket.timeout:
+            return False
+        except OSError:
+            return False
+        if data == probe:
+            return True
+    return False
+
+
+def multicast_loopback_available(local_addr):
+    first = multicast_socket(local_addr, 0)
+    if first is None:
+        return False
+    try:
+        port = first.getsockname()[1]
+        second = multicast_socket(local_addr, port)
+        if second is None:
+            return False
+        try:
+            first_probe = b"iris-lan-nearby-preflight-first"
+            second_probe = b"iris-lan-nearby-preflight-second"
+            if first.sendto(first_probe, (MDNS_GROUP, port)) < 0 or not received(second, first_probe):
+                return False
+            return second.sendto(second_probe, (MDNS_GROUP, port)) >= 0 and received(first, second_probe)
+        finally:
+            second.close()
+    finally:
+        first.close()
+
+
+def tcp_hairpin_available(local_addr):
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        listener.bind((local_addr, 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        accepted = []
+
+        def accept_once():
+            try:
+                conn, _ = listener.accept()
+                conn.close()
+                accepted.append(True)
+            except OSError:
+                pass
+
+        thread = threading.Thread(target=accept_once, daemon=True)
+        thread.start()
+        try:
+            with socket.create_connection((local_addr, port), timeout=1):
+                pass
+        except OSError:
+            return False
+        thread.join(timeout=1)
+        return bool(accepted)
+    finally:
+        listener.close()
+
+
+local_addr = private_local_ipv4()
+if local_addr is None:
+    print("no private local IPv4 route")
+    sys.exit(1)
+if not multicast_loopback_available(local_addr):
+    print("local multicast loopback unavailable")
+    sys.exit(1)
+if not tcp_hairpin_available(local_addr):
+    print("local TCP hairpin unavailable")
+    sys.exit(1)
+print("available")
+PY
+}
+
 android_sdk_dir() {
   local sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
   if [[ -z "${sdk}" && -f "${LOCAL_PROPERTIES}" ]]; then
@@ -275,6 +407,25 @@ if [[ "${#PARTICIPANT_TYPES[@]}" -lt 2 ]]; then
     exit 0
   fi
   exit 1
+fi
+
+has_participant_type() {
+  local wanted="$1"
+  for type in "${PARTICIPANT_TYPES[@]}"; do
+    [[ "${type}" == "${wanted}" ]] && return 0
+  done
+  return 1
+}
+
+if [[ "${ALLOW_SKIP}" -eq 1 &&
+      "${IOS_IS_SIMULATOR}" -eq 1 &&
+      "${#PARTICIPANT_TYPES[@]}" -eq 2 ]] &&
+   has_participant_type ios &&
+   has_participant_type macos; then
+  if ! preflight_reason="$(same_host_lan_preflight)"; then
+    echo "Skipping LAN visibility matrix: ${preflight_reason}"
+    exit 0
+  fi
 fi
 
 run_android_test() {

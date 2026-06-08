@@ -216,7 +216,14 @@ struct MessageRequestDeclineModifier: ViewModifier {
     let manager: AppManager
 
     func body(content: Content) -> some View {
-        content.confirmationDialog(
+        let declineDialog = withDeclineDialog(content)
+        let blockDialog = withBlockDialog(declineDialog)
+        let reportDialog = withReportDialog(blockDialog)
+        return withDeleteDialog(reportDialog)
+    }
+
+    private func withDeclineDialog<Base: View>(_ base: Base) -> some View {
+        base.confirmationDialog(
             target.map { "Decline \($0.displayName)?" } ?? "Decline request?",
             isPresented: Binding(
                 get: { target != nil },
@@ -257,7 +264,10 @@ struct MessageRequestDeclineModifier: ViewModifier {
                 Text("No notification is sent.")
             }
         )
-        .confirmationDialog(
+    }
+
+    private func withBlockDialog<Base: View>(_ base: Base) -> some View {
+        base.confirmationDialog(
             blockTarget.map { "Block \($0.displayName)?" } ?? "Block?",
             isPresented: Binding(
                 get: { blockTarget != nil },
@@ -292,7 +302,10 @@ struct MessageRequestDeclineModifier: ViewModifier {
                 Text("They won't be able to message you. No notification is sent.")
             }
         )
-        .confirmationDialog(
+    }
+
+    private func withReportDialog<Base: View>(_ base: Base) -> some View {
+        base.confirmationDialog(
             reportTarget.map { "Report \($0.displayName)?" } ?? "Report?",
             isPresented: Binding(
                 get: { reportTarget != nil },
@@ -332,7 +345,10 @@ struct MessageRequestDeclineModifier: ViewModifier {
                 Text("This prepares a report for support. No notification is sent.")
             }
         )
-        .confirmationDialog(
+    }
+
+    private func withDeleteDialog<Base: View>(_ base: Base) -> some View {
+        base.confirmationDialog(
             deleteTarget.map { "Delete chat with \($0.displayName)?" } ?? "Delete chat?",
             isPresented: Binding(
                 get: { deleteTarget != nil },

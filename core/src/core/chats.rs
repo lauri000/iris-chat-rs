@@ -3,8 +3,8 @@ use super::*;
 mod helpers;
 
 use self::helpers::{
-    delivery_trace_for_source_event, is_supported_group_pairwise_payload,
-    push_unique, summarize_group_send_effect_targets,
+    delivery_trace_for_source_event, is_supported_group_pairwise_payload, push_unique,
+    summarize_group_send_effect_targets,
 };
 
 const OPEN_CHAT_MESSAGES_PER_PAGE: usize = 80;
@@ -1339,38 +1339,10 @@ impl AppCore {
                 content.as_bytes(),
                 sender_owner,
                 sender_device,
-            ) {
-                Ok(group_outcome) => group_outcome,
-                Err(error) => {
-                    self.push_debug_log("appcore.protocol.group.payload.error", error.to_string());
-                    return;
-                }
-            };
-            if !group_outcome.events.is_empty() {
-                if !group_outcome.queued_targets.is_empty() {
-                    self.handle_queued_protocol_targets(
-                        "group.pairwise",
-                        &group_outcome.queued_targets,
-                    );
-                }
-                for group_event in group_outcome.events {
-                    self.apply_group_decrypted_event(group_event);
-                }
-                self.process_protocol_engine_effects(group_outcome.effects);
-                self.request_protocol_subscription_refresh();
-                return;
-            }
-            if group_outcome.consumed {
-                if !group_outcome.queued_targets.is_empty() {
-                    self.handle_queued_protocol_targets(
-                        "group.pairwise",
-                        &group_outcome.queued_targets,
-                    );
-                }
-                self.process_protocol_engine_effects(group_outcome.effects);
-                self.request_protocol_subscription_refresh();
-                return;
-            }
+                true,
+            )
+        {
+            return;
         }
 
         let effective_sender_owner = self.direct_message_display_sender_owner(
@@ -1887,37 +1859,6 @@ pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMes
         delivery_trace: message.delivery_trace.clone(),
         source_event_id: message.source_event_id.clone(),
     }
-}
-
-fn summarize_group_send_effect_targets(effects: &[ProtocolEffect]) -> String {
-    let mut targets = Vec::new();
-    for effect in effects {
-        let ProtocolEffect::Publish(publish) = effect else {
-            continue;
-        };
-        let stage = if publish.inner_event_id.is_some() {
-            "delivery"
-        } else {
-            "control"
-        };
-        targets.push(format!("{stage}:{}:{}", publish.chat_id, publish.event.id));
-    }
-    targets.join("|")
-}
-
-fn delivery_trace_for_source_event(source_event_id: Option<&str>) -> MessageDeliveryTraceSnapshot {
-    let mut trace = MessageDeliveryTraceSnapshot::default();
-    if let Some(source_event_id) = source_event_id {
-        trace.outer_event_ids.push(source_event_id.to_string());
-    }
-    trace
-}
-
-fn push_unique(values: &mut Vec<String>, value: &str) {
-    if values.iter().any(|existing| existing == value) {
-        return;
-    }
-    values.push(value.to_string());
 }
 
 pub(super) fn message_order(message: &ChatMessageSnapshot) -> u64 {
