@@ -1,4 +1,10 @@
 impl ProtocolEngine {
+    pub fn latest_app_keys_created_at(&self, owner_pubkey: PublicKey) -> Option<u64> {
+        self.latest_app_keys_created_at
+            .get(&owner_pubkey.to_hex())
+            .copied()
+    }
+
     pub fn ingest_app_keys_snapshot(
         &mut self,
         owner_pubkey: PublicKey,
