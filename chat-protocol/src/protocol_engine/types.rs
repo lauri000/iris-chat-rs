@@ -18,8 +18,6 @@ struct ProtocolEnginePersistedState {
     session_manager: SessionManagerSnapshot,
     group_manager: GroupManagerSnapshot,
     #[serde(default)]
-    latest_app_keys_created_at: BTreeMap<String, u64>,
-    #[serde(default)]
     pending_outbound: Vec<ProtocolPendingOutbound>,
     #[serde(default)]
     pending_inbound: Vec<ProtocolPendingInbound>,
@@ -353,7 +351,6 @@ pub struct ProtocolEngineDebugSnapshot {
     pub pending_group_fanout_targets: Vec<String>,
     pub subscription_generation: u64,
     pub last_backfill_attempt_secs: u64,
-    pub latest_app_keys_owner_count: usize,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -386,7 +383,6 @@ pub struct ProtocolEngine {
     storage: Arc<dyn StorageAdapter>,
     session_manager: SessionManager,
     group_manager: NostrGroupManager,
-    latest_app_keys_created_at: BTreeMap<String, u64>,
     pending_outbound: Vec<ProtocolPendingOutbound>,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
@@ -416,7 +412,6 @@ pub struct ProtocolEngine {
 struct ProtocolEngineCheckpoint {
     session_manager: SessionManager,
     group_manager: NostrGroupManager,
-    latest_app_keys_created_at: BTreeMap<String, u64>,
     pending_outbound: Vec<ProtocolPendingOutbound>,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,

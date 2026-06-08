@@ -767,12 +767,6 @@ impl AppCore {
                 known_app_keys_to_ndr(&app_keys),
             ) {
                 if let Some(protocol_engine) = self.protocol_engine.as_mut() {
-                    if protocol_engine
-                        .latest_app_keys_created_at(owner)
-                        .is_some_and(|created_at| created_at >= app_keys.created_at_secs)
-                    {
-                        continue;
-                    }
                     if let Ok(batch) = protocol_engine.ingest_app_keys_snapshot(
                         owner,
                         keys,
