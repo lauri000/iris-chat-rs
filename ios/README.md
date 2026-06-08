@@ -29,11 +29,16 @@ Common commands:
 
 ```bash
 cd /path/to/iris-chat-rs-cross-platform
+just run-ios-sims 4
 ./scripts/ios-build ios-gen-swift
 ./scripts/ios-build ios-xcframework
 ./scripts/ios-build ios-xcodeproj
 ./scripts/ios-build ios-test
 ```
+
+`just run-ios-sims 4` creates or reuses simulators named `Iris Chat iPhone 1`
+through `Iris Chat iPhone 4`, builds the latest simulator app once, then
+installs and launches it on all of them.
 
 ## Release Flow
 

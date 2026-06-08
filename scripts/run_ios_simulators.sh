@@ -3,8 +3,11 @@
 set -Eeuo pipefail
 
 DEFAULT_SIMULATORS=("Iris Chat iPhone" "Iris Chat iPhone 2")
+DEFAULT_PREFIX="Iris Chat iPhone"
 LIST_ONLY=0
 NO_OPEN=0
+COUNT=""
+PREFIX="${IRIS_IOS_SIMULATOR_PREFIX:-$DEFAULT_PREFIX}"
 SIMULATORS=()
 
 usage() {
@@ -14,11 +17,23 @@ Usage: scripts/run_ios_simulators.sh [options] [simulator-name...]
 Options:
   --list     Print available simulators and runtimes, then exit
   --no-open  Do not open the Simulator app after booting
+  --count N  Create or boot N simulators using the prefix below
+  --prefix X Name prefix for --count mode
 
 Defaults:
   Iris Chat iPhone
   Iris Chat iPhone 2
+
+Count mode names:
+  Iris Chat iPhone 1
+  Iris Chat iPhone 2
+  ...
 EOF
+}
+
+generated_name() {
+  local index="$1"
+  printf '%s %s\n' "$PREFIX" "$index"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -30,6 +45,14 @@ while [[ $# -gt 0 ]]; do
     --no-open)
       NO_OPEN=1
       shift
+      ;;
+    --count)
+      COUNT="$2"
+      shift 2
+      ;;
+    --prefix)
+      PREFIX="$2"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -54,7 +77,21 @@ if [[ ${LIST_ONLY} -eq 1 ]]; then
   exit 0
 fi
 
-if [[ ${#SIMULATORS[@]} -eq 0 ]]; then
+if [[ -n "$COUNT" && ${#SIMULATORS[@]} -gt 0 ]]; then
+  echo "Pass simulator names or --count, not both." >&2
+  exit 2
+fi
+
+if [[ -n "$COUNT" ]]; then
+  if ! [[ "$COUNT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--count must be a positive integer." >&2
+    exit 2
+  fi
+
+  for ((i = 1; i <= COUNT; i++)); do
+    SIMULATORS+=("$(generated_name "$i")")
+  done
+elif [[ ${#SIMULATORS[@]} -eq 0 ]]; then
   SIMULATORS=("${DEFAULT_SIMULATORS[@]}")
 fi
 

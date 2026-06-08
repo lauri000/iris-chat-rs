@@ -13,6 +13,7 @@ info:
     @echo "  just run-mobile"
     @echo "  just run-android"
     @echo "  just run-ios"
+    @echo "  just run-ios-sims [count]"
     @echo "  just run-linux"
     @echo "  just run-macos"
     @echo "  just run-windows"
@@ -79,6 +80,9 @@ run:
 
 run-ios:
     ./tools/run-ios
+
+run-ios-sims count="4":
+    ./tools/run-ios-simulators {{count}}
 
 run-mobile:
     ./tools/run-mobile

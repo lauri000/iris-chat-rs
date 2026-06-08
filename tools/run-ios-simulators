@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IOS_PROJECT="$ROOT/ios/IrisChat.xcodeproj"
+IOS_SCHEME="IrisChat"
+BUNDLE_ID="${IRIS_IOS_BUNDLE_ID:-to.iris.chat}"
+COUNT="${IRIS_IOS_SIMULATOR_COUNT:-4}"
+PREFIX="${IRIS_IOS_SIMULATOR_PREFIX:-Iris Chat iPhone}"
+NO_BUILD=0
+
+usage() {
+  cat <<'EOF'
+usage: ./tools/run-ios-simulators [count] [--count <n>] [--prefix <name>] [--no-build]
+EOF
+}
+
+generated_name() {
+  local index="$1"
+  printf '%s %s\n' "$PREFIX" "$index"
+}
+
+resolve_udid() {
+  local simulator_name="$1"
+  local devices_json
+
+  devices_json="$(xcrun simctl list -j devices available)"
+  SIMCTL_DEVICES_JSON="$devices_json" python3 - "$simulator_name" <<'PY'
+import json
+import os
+import sys
+
+name = sys.argv[1]
+devices = json.loads(os.environ["SIMCTL_DEVICES_JSON"]).get("devices", {})
+booted = []
+available = []
+for runtime_devices in devices.values():
+    for device in runtime_devices:
+        if not device.get("isAvailable", True):
+            continue
+        if device.get("name") != name:
+            continue
+        if device.get("state") == "Booted":
+            booted.append(device["udid"])
+        else:
+            available.append(device["udid"])
+
+for candidate in booted + available:
+    print(candidate)
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+resolve_app_path() {
+  local destination="$1"
+  local settings
+  local target_build_dir
+  local wrapper_name
+
+  settings="$(
+    xcodebuild \
+      -project "$IOS_PROJECT" \
+      -scheme "$IOS_SCHEME" \
+      -destination "$destination" \
+      -showBuildSettings 2>/dev/null
+  )"
+  target_build_dir="$(awk -F' = ' '/^[[:space:]]*TARGET_BUILD_DIR = / { print $2; exit }' <<<"$settings")"
+  wrapper_name="$(awk -F' = ' '/^[[:space:]]*WRAPPER_NAME = / { print $2; exit }' <<<"$settings")"
+  if [[ -n "${target_build_dir:-}" && -n "${wrapper_name:-}" ]]; then
+    printf '%s/%s\n' "$target_build_dir" "$wrapper_name"
+    return 0
+  fi
+
+  python3 - "$HOME/Library/Developer/Xcode/DerivedData" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+candidates = sorted(
+    root.glob("**/Debug-iphonesimulator/IrisChat.app"),
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+if candidates:
+    print(candidates[0])
+PY
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --count)
+      COUNT="$2"
+      shift 2
+      ;;
+    --prefix)
+      PREFIX="$2"
+      shift 2
+      ;;
+    --no-build)
+      NO_BUILD=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      if [[ "$1" =~ ^[1-9][0-9]*$ ]]; then
+        COUNT="$1"
+        shift
+      else
+        echo "Unknown argument: $1" >&2
+        usage >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
+
+if ! [[ "$COUNT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Simulator count must be a positive integer." >&2
+  exit 2
+fi
+
+SIMULATORS=()
+for ((i = 1; i <= COUNT; i++)); do
+  SIMULATORS+=("$(generated_name "$i")")
+done
+
+"$ROOT/scripts/run_ios_simulators.sh" --count "$COUNT" --prefix "$PREFIX"
+
+BUILD_DESTINATION="platform=iOS Simulator,name=${SIMULATORS[0]}"
+if [[ "$NO_BUILD" -eq 0 ]]; then
+  IRIS_IOS_SIM_DESTINATION="$BUILD_DESTINATION" "$ROOT/scripts/ios-build" ios-build-sim
+fi
+
+APP_PATH="$(resolve_app_path "$BUILD_DESTINATION")"
+if [[ -z "${APP_PATH:-}" || ! -d "$APP_PATH" ]]; then
+  echo "Built simulator app not found." >&2
+  exit 1
+fi
+
+for simulator_name in "${SIMULATORS[@]}"; do
+  UDID="$(resolve_udid "$simulator_name")"
+  xcrun simctl install "$UDID" "$APP_PATH" >/dev/null
+  xcrun simctl launch "$UDID" "$BUNDLE_ID" >"/tmp/iris-chat-ios-launch-${UDID}.log" 2>&1 || true
+  echo "iOS app launched on $simulator_name ($UDID)"
+done
+
+echo "Installed iOS app on ${#SIMULATORS[@]} simulator(s)."
