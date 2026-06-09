@@ -1398,7 +1398,6 @@ dependencies = [
  "nostr-double-ratchet",
  "nostr-double-ratchet-nostr",
  "nostr-double-ratchet-pairwise-codec",
- "nostr-double-ratchet-runtime",
  "rand 0.8.6",
  "rusqlite",
  "serde",
