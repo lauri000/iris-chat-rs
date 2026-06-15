@@ -1,5 +1,11 @@
-# iris chat
 
+
+# iris chat
+---
+
+Mon 15. Jun 2026: Development moved to https://github.com/irislib/iris-chat-rs
+
+---
 Encrypted chat app using Nostr Double Ratchet. Shared Rust core, native UIs.
 
 Primary development is on hashtree:
